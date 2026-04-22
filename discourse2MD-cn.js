@@ -2331,6 +2331,65 @@
             };
         },
 
+        appendDialogDetails(bodyEl, options = {}) {
+            if (options?.message) {
+                const messageEl = document.createElement("div");
+                messageEl.className = "ld-note";
+                messageEl.textContent = options.message;
+                bodyEl.appendChild(messageEl);
+            }
+
+            const appendList = (items) => {
+                const normalizedItems = Array.isArray(items)
+                    ? items.map((item) => String(item || "").trim()).filter(Boolean)
+                    : [];
+                if (normalizedItems.length === 0) return;
+
+                const listEl = document.createElement("div");
+                listEl.className = "ld-manage-list";
+                for (const item of normalizedItems) {
+                    const row = document.createElement("div");
+                    row.className = "ld-manage-item";
+
+                    const text = document.createElement("div");
+                    text.className = "ld-manage-text";
+                    text.textContent = item;
+                    row.appendChild(text);
+                    listEl.appendChild(row);
+                }
+                bodyEl.appendChild(listEl);
+            };
+
+            const sections = Array.isArray(options?.sections)
+                ? options.sections
+                    .map((section) => ({
+                        title: String(section?.title || "").trim(),
+                        items: Array.isArray(section?.items)
+                            ? section.items.map((item) => String(item || "").trim()).filter(Boolean)
+                            : [],
+                    }))
+                    .filter((section) => section.title || section.items.length > 0)
+                : [];
+
+            if (sections.length > 0) {
+                sections.forEach((section, index) => {
+                    if (section.title) {
+                        const titleEl = document.createElement("div");
+                        titleEl.className = "ld-field-label";
+                        if (index > 0 || options?.message) {
+                            titleEl.style.marginTop = "12px";
+                        }
+                        titleEl.textContent = section.title;
+                        bodyEl.appendChild(titleEl);
+                    }
+                    appendList(section.items);
+                });
+                return;
+            }
+
+            appendList(options?.details);
+        },
+
         showConfirmDialog(options) {
             return new Promise((resolve) => {
                 const frame = this.createDialogFrame({
@@ -2338,28 +2397,7 @@
                     onCancel: () => resolve(false),
                 });
 
-                if (options?.message) {
-                    const messageEl = document.createElement("div");
-                    messageEl.className = "ld-note";
-                    messageEl.textContent = options.message;
-                    frame.bodyEl.appendChild(messageEl);
-                }
-
-                if (Array.isArray(options?.details) && options.details.length > 0) {
-                    const listEl = document.createElement("div");
-                    listEl.className = "ld-manage-list";
-                    for (const item of options.details) {
-                        const row = document.createElement("div");
-                        row.className = "ld-manage-item";
-
-                        const text = document.createElement("div");
-                        text.className = "ld-manage-text";
-                        text.textContent = item;
-                        row.appendChild(text);
-                        listEl.appendChild(row);
-                    }
-                    frame.bodyEl.appendChild(listEl);
-                }
+                this.appendDialogDetails(frame.bodyEl, options);
 
                 const cancelBtn = document.createElement("button");
                 cancelBtn.className = "ld-btn ld-btn-ghost";
@@ -2378,6 +2416,28 @@
                 });
 
                 frame.footerEl.appendChild(cancelBtn);
+                frame.footerEl.appendChild(confirmBtn);
+                confirmBtn.focus();
+            });
+        },
+
+        showNoticeDialog(options) {
+            return new Promise((resolve) => {
+                const frame = this.createDialogFrame({
+                    title: options?.title || "提示",
+                    onCancel: () => resolve(false),
+                });
+
+                this.appendDialogDetails(frame.bodyEl, options);
+
+                const confirmBtn = document.createElement("button");
+                confirmBtn.className = `ld-btn ${options?.danger ? "ld-btn-danger" : "ld-btn-primary"}`;
+                confirmBtn.type = "button";
+                confirmBtn.textContent = options?.confirmText || "我知道了";
+                confirmBtn.addEventListener("click", () => {
+                    frame.close(resolve(true));
+                });
+
                 frame.footerEl.appendChild(confirmBtn);
                 confirmBtn.focus();
             });
@@ -4159,6 +4219,12 @@ floors: ${posts.length}
         return items;
     }
 
+    function buildDuplicateDetailSection(title, matches, limit = 3) {
+        const items = buildDuplicatePathDetails(matches, limit);
+        if (items.length === 0) return null;
+        return { title, items };
+    }
+
     async function resolveObsidianExportTargetPath(topic, settings) {
         const topicId = String(topic?.topicId || "");
         const defaultFilename = buildMarkdownFilename(topic);
@@ -4180,12 +4246,58 @@ floors: ${posts.length}
 
         const sameCategoryMatches = topicMatches.filter((record) => isPathInside(settings.obsidian.dir, record.path));
         const sameCategoryMatch = sameCategoryMatches[0] || null;
+        const otherMatches = topicMatches.filter((record) => !isPathInside(settings.obsidian.dir, record.path));
+
+        if (sameCategoryMatches.length > 1) {
+            const sections = [
+                buildDuplicateDetailSection("当前分类命中（请先清理）", sameCategoryMatches),
+                buildDuplicateDetailSection("根目录其他分类命中", otherMatches),
+            ].filter(Boolean);
+
+            await ui.showNoticeDialog({
+                title: "当前分类存在多份同主题",
+                message: "当前分类下检测到多份相同 topic_id 的笔记。为避免覆盖错误文件，本次导出已阻止；请先清理重复文件后再试。",
+                sections,
+                confirmText: "我知道了",
+            });
+
+            return {
+                blocked: true,
+                reason: "当前分类存在多份同主题笔记，请先清理重复文件",
+            };
+        }
+
+        if (sameCategoryMatch && otherMatches.length > 0) {
+            const confirmed = await ui.showConfirmDialog({
+                title: "发现重复主题",
+                message: "当前分类下已有相同话题。若继续，将覆盖当前分类中的现有笔记；根目录其他分类中的同主题仅作提示，不会被修改。",
+                sections: [
+                    buildDuplicateDetailSection("当前分类（将覆盖）", [sameCategoryMatch]),
+                    buildDuplicateDetailSection("根目录其他分类（仅提示）", otherMatches),
+                ].filter(Boolean),
+                confirmText: "覆盖当前分类",
+                cancelText: "取消",
+                danger: true,
+            });
+
+            if (!confirmed) {
+                return { cancelled: true };
+            }
+
+            return {
+                fullPath: sameCategoryMatch.path,
+                sameCategoryMatch,
+                otherMatches,
+            };
+        }
 
         if (sameCategoryMatch) {
             const confirmed = await ui.showConfirmDialog({
                 title: "分类内发现同话题",
-                message: "分类下已有相同话题，是否导出？若继续将覆盖原文档。",
-                details: buildDuplicatePathDetails(sameCategoryMatches),
+                message: "当前分类下已有相同话题，若继续将覆盖原文档。",
+                sections: [
+                    buildDuplicateDetailSection("当前分类（将覆盖）", [sameCategoryMatch]),
+                ].filter(Boolean),
                 confirmText: "覆盖导出",
                 cancelText: "取消",
                 danger: true,
@@ -4196,12 +4308,13 @@ floors: ${posts.length}
             }
         }
 
-        const otherMatches = topicMatches.filter((record) => !isPathInside(settings.obsidian.dir, record.path));
         if (otherMatches.length > 0) {
             const confirmed = await ui.showConfirmDialog({
-                title: "根目录内发现同话题",
-                message: "根目录下已有相同话题，是否导出？",
-                details: buildDuplicatePathDetails(otherMatches),
+                title: "其他分类已存在同话题",
+                message: "根目录其他分类下已有相同话题。若继续，将在当前分类新增一份副本，不会修改其他分类中的现有笔记。",
+                sections: [
+                    buildDuplicateDetailSection("根目录其他分类（仅提示）", otherMatches),
+                ].filter(Boolean),
                 confirmText: "继续导出",
                 cancelText: "取消",
             });
@@ -4465,6 +4578,10 @@ floors: ${posts.length}
             const targetPathResult = await resolveObsidianExportTargetPath(context.topic, context.settings);
             if (targetPathResult?.cancelled) {
                 ui.setStatus("已取消导出", "#facc15");
+                return;
+            }
+            if (targetPathResult?.blocked) {
+                ui.setStatus(targetPathResult.reason || "检测到异常重复文件，已阻止导出", "#facc15");
                 return;
             }
 

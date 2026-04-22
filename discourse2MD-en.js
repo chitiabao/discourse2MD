@@ -2331,6 +2331,65 @@
             };
         },
 
+        appendDialogDetails(bodyEl, options = {}) {
+            if (options?.message) {
+                const messageEl = document.createElement("div");
+                messageEl.className = "ld-note";
+                messageEl.textContent = options.message;
+                bodyEl.appendChild(messageEl);
+            }
+
+            const appendList = (items) => {
+                const normalizedItems = Array.isArray(items)
+                    ? items.map((item) => String(item || "").trim()).filter(Boolean)
+                    : [];
+                if (normalizedItems.length === 0) return;
+
+                const listEl = document.createElement("div");
+                listEl.className = "ld-manage-list";
+                for (const item of normalizedItems) {
+                    const row = document.createElement("div");
+                    row.className = "ld-manage-item";
+
+                    const text = document.createElement("div");
+                    text.className = "ld-manage-text";
+                    text.textContent = item;
+                    row.appendChild(text);
+                    listEl.appendChild(row);
+                }
+                bodyEl.appendChild(listEl);
+            };
+
+            const sections = Array.isArray(options?.sections)
+                ? options.sections
+                    .map((section) => ({
+                        title: String(section?.title || "").trim(),
+                        items: Array.isArray(section?.items)
+                            ? section.items.map((item) => String(item || "").trim()).filter(Boolean)
+                            : [],
+                    }))
+                    .filter((section) => section.title || section.items.length > 0)
+                : [];
+
+            if (sections.length > 0) {
+                sections.forEach((section, index) => {
+                    if (section.title) {
+                        const titleEl = document.createElement("div");
+                        titleEl.className = "ld-field-label";
+                        if (index > 0 || options?.message) {
+                            titleEl.style.marginTop = "12px";
+                        }
+                        titleEl.textContent = section.title;
+                        bodyEl.appendChild(titleEl);
+                    }
+                    appendList(section.items);
+                });
+                return;
+            }
+
+            appendList(options?.details);
+        },
+
         showConfirmDialog(options) {
             return new Promise((resolve) => {
                 const frame = this.createDialogFrame({
@@ -2338,28 +2397,7 @@
                     onCancel: () => resolve(false),
                 });
 
-                if (options?.message) {
-                    const messageEl = document.createElement("div");
-                    messageEl.className = "ld-note";
-                    messageEl.textContent = options.message;
-                    frame.bodyEl.appendChild(messageEl);
-                }
-
-                if (Array.isArray(options?.details) && options.details.length > 0) {
-                    const listEl = document.createElement("div");
-                    listEl.className = "ld-manage-list";
-                    for (const item of options.details) {
-                        const row = document.createElement("div");
-                        row.className = "ld-manage-item";
-
-                        const text = document.createElement("div");
-                        text.className = "ld-manage-text";
-                        text.textContent = item;
-                        row.appendChild(text);
-                        listEl.appendChild(row);
-                    }
-                    frame.bodyEl.appendChild(listEl);
-                }
+                this.appendDialogDetails(frame.bodyEl, options);
 
                 const cancelBtn = document.createElement("button");
                 cancelBtn.className = "ld-btn ld-btn-ghost";
@@ -2378,6 +2416,28 @@
                 });
 
                 frame.footerEl.appendChild(cancelBtn);
+                frame.footerEl.appendChild(confirmBtn);
+                confirmBtn.focus();
+            });
+        },
+
+        showNoticeDialog(options) {
+            return new Promise((resolve) => {
+                const frame = this.createDialogFrame({
+                    title: options?.title || "Notice",
+                    onCancel: () => resolve(false),
+                });
+
+                this.appendDialogDetails(frame.bodyEl, options);
+
+                const confirmBtn = document.createElement("button");
+                confirmBtn.className = `ld-btn ${options?.danger ? "ld-btn-danger" : "ld-btn-primary"}`;
+                confirmBtn.type = "button";
+                confirmBtn.textContent = options?.confirmText || "OK";
+                confirmBtn.addEventListener("click", () => {
+                    frame.close(resolve(true));
+                });
+
                 frame.footerEl.appendChild(confirmBtn);
                 confirmBtn.focus();
             });
@@ -4159,6 +4219,12 @@ floors: ${posts.length}
         return items;
     }
 
+    function buildDuplicateDetailSection(title, matches, limit = 3) {
+        const items = buildDuplicatePathDetails(matches, limit);
+        if (items.length === 0) return null;
+        return { title, items };
+    }
+
     async function resolveObsidianExportTargetPath(topic, settings) {
         const topicId = String(topic?.topicId || "");
         const defaultFilename = buildMarkdownFilename(topic);
@@ -4180,12 +4246,58 @@ floors: ${posts.length}
 
         const sameCategoryMatches = topicMatches.filter((record) => isPathInside(settings.obsidian.dir, record.path));
         const sameCategoryMatch = sameCategoryMatches[0] || null;
+        const otherMatches = topicMatches.filter((record) => !isPathInside(settings.obsidian.dir, record.path));
+
+        if (sameCategoryMatches.length > 1) {
+            const sections = [
+                buildDuplicateDetailSection("Current Category (clean up required)", sameCategoryMatches),
+                buildDuplicateDetailSection("Other Categories Under the Root", otherMatches),
+            ].filter(Boolean);
+
+            await ui.showNoticeDialog({
+                title: "Multiple Duplicate Notes in Current Category",
+                message: "Multiple notes with the same topic_id were found in the current category. Export has been blocked to avoid overwriting the wrong file. Please clean up the duplicates and try again.",
+                sections,
+                confirmText: "OK",
+            });
+
+            return {
+                blocked: true,
+                reason: "Multiple notes for this topic exist in the current category. Clean them up before exporting again.",
+            };
+        }
+
+        if (sameCategoryMatch && otherMatches.length > 0) {
+            const confirmed = await ui.showConfirmDialog({
+                title: "Duplicate Topic Found",
+                message: "A note for this topic already exists in the current category. Continuing will overwrite that note. Matching notes in other categories are shown for awareness only and will not be modified.",
+                sections: [
+                    buildDuplicateDetailSection("Current Category (will be overwritten)", [sameCategoryMatch]),
+                    buildDuplicateDetailSection("Other Categories Under the Root (informational only)", otherMatches),
+                ].filter(Boolean),
+                confirmText: "Overwrite Current Category",
+                cancelText: "Cancel",
+                danger: true,
+            });
+
+            if (!confirmed) {
+                return { cancelled: true };
+            }
+
+            return {
+                fullPath: sameCategoryMatch.path,
+                sameCategoryMatch,
+                otherMatches,
+            };
+        }
 
         if (sameCategoryMatch) {
             const confirmed = await ui.showConfirmDialog({
                 title: "Duplicate Topic in Category",
                 message: "A note for this topic already exists in the current category. Continue and overwrite it?",
-                details: buildDuplicatePathDetails(sameCategoryMatches),
+                sections: [
+                    buildDuplicateDetailSection("Current Category (will be overwritten)", [sameCategoryMatch]),
+                ].filter(Boolean),
                 confirmText: "Overwrite",
                 cancelText: "Cancel",
                 danger: true,
@@ -4196,12 +4308,13 @@ floors: ${posts.length}
             }
         }
 
-        const otherMatches = topicMatches.filter((record) => !isPathInside(settings.obsidian.dir, record.path));
         if (otherMatches.length > 0) {
             const confirmed = await ui.showConfirmDialog({
-                title: "Duplicate Topic in Root",
-                message: "A note for this topic already exists under the selected root. Continue exporting?",
-                details: buildDuplicatePathDetails(otherMatches),
+                title: "Duplicate Topic in Another Category",
+                message: "A note for this topic already exists in another category under the selected root. Continuing will create another copy in the current category and will not modify the existing notes elsewhere.",
+                sections: [
+                    buildDuplicateDetailSection("Other Categories Under the Root (informational only)", otherMatches),
+                ].filter(Boolean),
                 confirmText: "Continue",
                 cancelText: "Cancel",
             });
@@ -4465,6 +4578,10 @@ floors: ${posts.length}
             const targetPathResult = await resolveObsidianExportTargetPath(context.topic, context.settings);
             if (targetPathResult?.cancelled) {
                 ui.setStatus("Export cancelled", "#facc15");
+                return;
+            }
+            if (targetPathResult?.blocked) {
+                ui.setStatus(targetPathResult.reason || "Export blocked because duplicate notes require cleanup", "#facc15");
                 return;
             }
 

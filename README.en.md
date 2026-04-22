@@ -123,8 +123,10 @@ Additional notes:
 
 The script shows a directory overview for the selected root and category, then scans existing notes by `topic_id` before export:
 
-- if the same topic already exists in the current category, the script asks whether to overwrite it
-- if the same topic exists in another category under the same root, the script asks whether to continue exporting
+- if the same topic appears exactly once in the current category, the script asks whether to overwrite it
+- if the same topic exists in another category under the same root, the script asks whether to continue and makes it clear that exporting will create another copy in the current category
+- if both the current category and other categories match, the script shows a single confirmation that explains the overwrite target and the additional matches
+- if multiple notes with the same `topic_id` exist in the current category, the script blocks export and asks you to clean them up first
 
 ## Usage
 
@@ -307,8 +309,10 @@ If you only need part of the topic, narrow the export first with rule-based filt
 
 The script scans existing Markdown files under the selected root by `topic_id` so it does not overwrite the same topic silently.
 
-- match inside the current category: asks whether to overwrite
-- match in another category under the same root: asks whether to continue
+- one match inside the current category: asks whether to overwrite
+- matches in other categories under the same root: asks whether to continue and export another copy into the current category
+- matches in both places: asks once and shows both sets of paths
+- multiple matches inside the current category: blocks export until the duplicates are cleaned up
 
 ### How do I switch between Chinese and English
 
