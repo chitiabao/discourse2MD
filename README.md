@@ -10,8 +10,8 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 
 当前仓库提供两个语言版本脚本：
 
-- `discourse2MD-cn.js`
-- `discourse2MD-en.js`
+- `discourse2MD-cn.user.js`
+- `discourse2MD-en.user.js`
 
 它们是同一个工具的不同界面语言版本，共用同一套 userscript 身份与配置。安装时请选择其中一个，不要同时启用两份。
 
@@ -59,10 +59,10 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 
 ## 安装步骤
 
-1. 在 userscript 管理器中导入脚本。
-2. 二选一安装：
-   - 中文界面：`discourse2MD-cn.js`
-   - 英文界面：`discourse2MD-en.js`
+1. 在 userscript 管理器中二选一安装脚本：
+   - 中文界面：[`discourse2MD-cn.user.js`](https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-cn.user.js)
+   - 英文界面：[`discourse2MD-en.user.js`](https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-en.user.js)
+2. 也可以先打开仓库中的对应脚本文件，再点击 GitHub 页面上的 `Raw` 直接导入。
 3. 保存并启用脚本。
 4. 打开任意匹配的 Discourse 主题页。
 5. 页面右下角会出现导出按钮，点击后可展开导出面板。
@@ -318,7 +318,7 @@ https://127.0.0.1:27124
 
 请在 userscript 管理器中停用或替换当前脚本，再导入另一个语言版本。
 
-不要同时启用 `discourse2MD-cn.js` 和 `discourse2MD-en.js`，否则会因为它们共享同一 userscript 身份与配置而产生冲突。
+不要同时启用 `discourse2MD-cn.user.js` 和 `discourse2MD-en.user.js`，否则会因为它们共享同一 userscript 身份与配置而产生冲突。
 
 ## 注意事项
 

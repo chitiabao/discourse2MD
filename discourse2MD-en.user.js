@@ -1,7 +1,9 @@
 ﻿// ==UserScript==
 // @name         Discourse2MD - Export to Obsidian
 // @namespace    https://discourse.org/
-// @version      4.7.0
+// @version      1.0.0
+// @updateURL    https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-en.user.js
+// @downloadURL  https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-en.user.js
 // @description  Export Discourse topics to Obsidian (Local REST API, image handling, and callout formatting)
 // @author       ilvsx
 // @license      MIT

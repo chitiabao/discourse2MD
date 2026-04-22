@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         Discourse2MD - Export to Obsidian
 // @namespace    https://discourse.org/
-// @version      4.7.0
+// @version      1.0.0
+// @updateURL    https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-cn.user.js
+// @downloadURL  https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-cn.user.js
 // @description  导出 Discourse 社区帖子到 Obsidian（支持 Local REST API、图片处理、Callout 格式）
 // @author       ilvsx
 // @license      MIT

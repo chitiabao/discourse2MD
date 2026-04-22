@@ -10,8 +10,8 @@ The project targets generic Discourse sites rather than a single branded forum. 
 
 This repository currently provides two language variants:
 
-- `discourse2MD-cn.js`
-- `discourse2MD-en.js`
+- `discourse2MD-cn.user.js`
+- `discourse2MD-en.user.js`
 
 They are two UI languages for the same tool and share the same userscript identity and stored settings. Install only one of them at a time.
 
@@ -59,10 +59,10 @@ Additional notes:
 
 ## Installation
 
-1. Import the script into your userscript manager.
-2. Choose one version:
-   - Chinese UI: `discourse2MD-cn.js`
-   - English UI: `discourse2MD-en.js`
+1. Install one script in your userscript manager:
+   - Chinese UI: [`discourse2MD-cn.user.js`](https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-cn.user.js)
+   - English UI: [`discourse2MD-en.user.js`](https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-en.user.js)
+2. You can also open the corresponding script file in the repository and click `Raw` on GitHub to import it directly.
 3. Save and enable it.
 4. Open any supported Discourse topic page.
 5. An export button will appear in the lower-right corner. Click it to open the export panel.
@@ -318,7 +318,7 @@ The script scans existing Markdown files under the selected root by `topic_id` s
 
 Disable or replace the currently installed script in your userscript manager, then import the other language variant.
 
-Do not enable `discourse2MD-cn.js` and `discourse2MD-en.js` at the same time, because they share the same userscript identity and stored settings.
+Do not enable `discourse2MD-cn.user.js` and `discourse2MD-en.user.js` at the same time, because they share the same userscript identity and stored settings.
 
 ## Notes
 
