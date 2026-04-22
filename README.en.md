@@ -19,7 +19,7 @@ Current capabilities:
 
 - export to a browser-downloaded Markdown file
 - export directly to Obsidian through Local REST API
-- image handling: `file` / `base64` / `none`
+- image storage: `file` / `local-plus` / `base64` / `none`
 - export templates: `forum` / `clean`
 - rule-based filters: post range, OP only, image filter, users, keywords, minimum length
 - AI filtering for low-value replies
@@ -51,6 +51,12 @@ Additional notes:
 - The default API URL is `https://127.0.0.1:27124`.
 - If the local HTTPS certificate is not trusted, the script will automatically fall back to local HTTP.
 
+### 3. If you want `local-plus` storage mode, also install Local Images Plus
+
+1. Install [Local Images Plus](https://github.com/Sergei-Korneev/obsidian-local-images-plus) from Obsidian community plugins.
+2. Configure the attachment directory and localization behavior the way you want inside your vault.
+3. After exporting with the unified script in `local-plus` mode, run Local Images Plus in Obsidian to convert remote image links in the note into local attachments.
+
 ## Installation
 
 1. Import the script into your userscript manager.
@@ -60,6 +66,11 @@ Additional notes:
 3. Save and enable it.
 4. Open any supported Discourse topic page.
 5. An export button will appear in the lower-right corner. Click it to open the export panel.
+
+Upgrade note:
+
+- If you previously installed the `local-images-plus/` variant, switch to the unified script manually and reselect the storage mode.
+- This merge does not migrate stored settings from the old variant.
 
 ## Configuration
 
@@ -76,7 +87,7 @@ Once you open a Discourse topic page, the script panel contains two main areas:
 | API Key | Copied from the Obsidian plugin settings | Required for Obsidian export |
 | Root | Top-level export path inside the vault, can be nested | Default `Linux.do` |
 | Category | Single-level category folder under the current root | Default `Uncategorized` |
-| Image Mode | `file` / `base64` / `none` | Default `file` |
+| Storage Mode | `file` / `local-plus` / `base64` / `none` | Default `file` |
 | Image Directory | Image save directory, only used in `file` mode | Default `attachments` |
 
 ### Rules for root, category, and image directory
@@ -87,23 +98,26 @@ Once you open a Discourse topic page, the script panel contains two main areas:
 - In the current configuration model, the image directory is resolved relative to the selected root.
 - If the selected root or category does not exist yet, it will be created on first export.
 
-### Image mode comparison
+### Storage mode comparison
 
 | Mode | Description | Advantage | Best for |
 | --- | --- | --- | --- |
 | `file` | Saves images into the vault and references them with `![[...]]` | Smaller notes, reusable assets | Long-term Obsidian storage |
+| `local-plus` | Keeps remote image links and leaves localization to Local Images Plus | No direct image writes from the script, easier to align with vault-side rules | Vaults already using Local Images Plus |
 | `base64` | Embeds images directly into Markdown | Self-contained single file | Portable one-file exports |
 | `none` | Skips image export entirely | Smallest output | Text-only archives |
 
 Additional notes:
 
-- `Export Markdown` always embeds images as Base64 and does not use the Obsidian image mode setting.
-- The image mode setting only applies to `Export to Obsidian`.
+- `Export Markdown` always embeds images as Base64 and does not use the Obsidian storage mode setting.
+- The storage mode setting only applies to `Export to Obsidian`.
 - In `file` mode, the effective image path looks like:
 
 ```text
 <root>/<image-directory>/<topicId>/
 ```
+
+- In `local-plus` mode, the script keeps remote image links and does not write image files directly.
 
 ### Directory overview and duplicate topic detection
 
@@ -127,7 +141,7 @@ The script shows a directory overview for the selected root and category, then s
 1. Open the target Discourse topic page.
 2. Fill in `API URL` and `API Key` under `Obsidian Settings`.
 3. Click `Test Connection`.
-4. Choose the root, category, image mode, and image directory.
+4. Choose the root, category, storage mode, and the image directory used by `file` mode.
 5. Under `Export Style`, choose a template and configure filters if needed.
 6. Click `Export to Obsidian`.
 7. On success, the note is written directly into the selected vault path.

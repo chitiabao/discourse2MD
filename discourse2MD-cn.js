@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse2MD - Export to Obsidian
 // @namespace    https://discourse.org/
-// @version      4.6.1
+// @version      4.7.0
 // @description  导出 Discourse 社区帖子到 Obsidian（支持 Local REST API、图片处理、Callout 格式）
 // @author       ilvsx
 // @license      MIT
@@ -89,6 +89,23 @@
         obsApiUrl: "https://127.0.0.1:27124",
         obsApiKey: "",
     };
+
+    function normalizeObsidianImageMode(value) {
+        switch (String(value || "").trim().toLowerCase()) {
+            case "file":
+            case "local-plus":
+            case "base64":
+            case "none":
+                return String(value || "").trim().toLowerCase();
+            default:
+                return DEFAULTS.obsImgMode;
+        }
+    }
+
+    function getStoredObsidianImageMode() {
+        const normalized = normalizeObsidianImageMode(GM_getValue(K.OBS_IMG_MODE, DEFAULTS.obsImgMode));
+        return normalized;
+    }
 
     function normalizeExportTemplate(template) {
         return String(template || "").toLowerCase() === "clean" ? "clean" : DEFAULTS.exportTemplate;
@@ -1051,7 +1068,6 @@
         selObsImgMode: null,
         obsImgDirWrap: null,
         inputObsImgDir: null,
-        obsImgPreviewNote: null,
 
         obsidianConfig: null,
         isBusy: false,
@@ -1488,10 +1504,6 @@
 
 #ld-export-panel .ld-action-group .ld-btn {
   min-width: 0;
-}
-
-#ld-export-panel .ld-export-hint {
-  padding: 0 2px;
 }
 
 #ld-export-panel .ld-btn-inline {
@@ -2193,10 +2205,8 @@
             if (this.inputObsImgDir) {
                 this.inputObsImgDir.value = this.obsidianConfig.imgDirRaw || "";
             }
-            if (this.obsImgPreviewNote) {
-                this.obsImgPreviewNote.textContent = this.obsidianConfig.imgDirKind === OBS_IMG_DIR_KIND.LEGACY
-                    ? `当前使用 legacy 图片路径：${resolved.imgDir || "(未配置)"}`
-                    : `最终路径：${resolved.imgDir || "(未配置)"}`;
+            if (this.obsImgDirWrap && this.selObsImgMode) {
+                this.obsImgDirWrap.style.display = normalizeObsidianImageMode(this.selObsImgMode.value) === "file" ? "" : "none";
             }
         },
 
@@ -2676,8 +2686,6 @@
       <button id="ld-export-obsidian" class="ld-btn ld-btn-ghost" type="button">导出到 Obsidian</button>
     </div>
 
-    <div class="ld-note ld-export-hint">Markdown 下载默认内嵌 Base64 图片；下方图片设置仅作用于 Obsidian 导出。</div>
-
     <div id="ld-fallback-wrap" class="ld-fallback-wrap" style="display:none;">
       <a id="ld-fallback-btn" class="ld-btn ld-btn-ghost ld-btn-link" download>兜底下载（点击保存）</a>
     </div>
@@ -2686,7 +2694,7 @@
       <button id="ld-obsidian-toggle" class="ld-section-toggle" type="button">
         <span class="ld-section-copy">
           <span class="ld-section-title">Obsidian 连接设置</span>
-          <span class="ld-section-meta">API、导出位置与图片导出</span>
+          <span class="ld-section-meta">API、导出位置与图片存储</span>
         </span>
         <span id="ld-obsidian-arrow" class="ld-section-arrow">▾</span>
       </button>
@@ -2733,14 +2741,15 @@
         </div>
 
         <div class="ld-group">
-          <div class="ld-group-title">图片导出</div>
+          <div class="ld-group-title">图片存储</div>
 
           <label class="ld-field">
-            <span class="ld-field-label">图片模式</span>
+            <span class="ld-field-label">存储模式</span>
             <select id="ld-obs-img-mode" class="ld-input ld-select">
-              <option value="file">保存图片并引用（体积小）</option>
-              <option value="base64">内嵌到笔记（单文件）</option>
-              <option value="none">不导出图片（纯文字）</option>
+              <option value="file">文件</option>
+              <option value="local-plus">Local Images Plus</option>
+              <option value="base64">Base64</option>
+              <option value="none">不导出</option>
             </select>
           </label>
 
@@ -2748,8 +2757,6 @@
             <span class="ld-field-label">图片目录</span>
             <input id="ld-obs-img-dir" class="ld-input" type="text" placeholder="如 images 或 attachments/topic-assets" />
           </label>
-
-          <div id="ld-obs-img-preview" class="ld-note ld-path-preview">最终路径：</div>
         </div>
 
         <div class="ld-note">
@@ -2941,7 +2948,6 @@
             this.selObsImgMode = panelRoot.querySelector("#ld-obs-img-mode");
             this.obsImgDirWrap = panelRoot.querySelector("#ld-obs-img-dir-wrap");
             this.inputObsImgDir = panelRoot.querySelector("#ld-obs-img-dir");
-            this.obsImgPreviewNote = panelRoot.querySelector("#ld-obs-img-preview");
 
             this.btnFallback = panelRoot.querySelector("#ld-fallback-btn");
 
@@ -2959,7 +2965,7 @@
             const aiApiUrl = GM_getValue(K.AI_API_URL, DEFAULTS.aiApiUrl);
             const aiApiKey = GM_getValue(K.AI_API_KEY, DEFAULTS.aiApiKey);
             const aiModelId = GM_getValue(K.AI_MODEL_ID, DEFAULTS.aiModelId);
-            const obsImgMode = GM_getValue(K.OBS_IMG_MODE, DEFAULTS.obsImgMode);
+            const obsImgMode = getStoredObsidianImageMode();
             const obsApiUrl = GM_getValue(K.OBS_API_URL, DEFAULTS.obsApiUrl);
             const obsApiKey = GM_getValue(K.OBS_API_KEY, DEFAULTS.obsApiKey);
             this.obsidianConfig = getStoredObsidianConfig();
@@ -2978,10 +2984,9 @@
             this.inputAiApiUrl.value = normalizeAiApiBaseUrl(aiApiUrl || "");
             this.inputAiApiKey.value = aiApiKey || "";
             this.inputAiModelId.value = aiModelId || "";
-            this.selObsImgMode.value = obsImgMode || DEFAULTS.obsImgMode;
+            this.selObsImgMode.value = obsImgMode;
             this.inputObsApiUrl.value = normalizeObsidianApiUrl(obsApiUrl || "");
             this.inputObsApiKey.value = obsApiKey || "";
-            this.obsImgDirWrap.style.display = obsImgMode === "file" ? "" : "none";
             this.syncObsidianLocationUi();
 
             const collapsed = GM_getValue(K.PANEL_COLLAPSED, true);
@@ -3115,7 +3120,8 @@
                 this.scheduleObsidianOverviewRefresh();
             });
             this.selObsImgMode.addEventListener("change", () => {
-                const mode = this.selObsImgMode.value;
+                const mode = normalizeObsidianImageMode(this.selObsImgMode.value);
+                this.selObsImgMode.value = mode;
                 GM_setValue(K.OBS_IMG_MODE, mode);
                 this.obsImgDirWrap.style.display = mode === "file" ? "" : "none";
             });
@@ -3152,7 +3158,7 @@
             const aiModelId = this.inputAiModelId.value || "";
 
             const obsidianPaths = resolveObsidianPaths(this.obsidianConfig || getStoredObsidianConfig());
-            const obsImgMode = this.selObsImgMode.value || DEFAULTS.obsImgMode;
+            const obsImgMode = normalizeObsidianImageMode(this.selObsImgMode.value);
             const obsApiUrl = normalizeObsidianApiUrl(this.inputObsApiUrl.value || DEFAULTS.obsApiUrl);
             const obsApiKey = this.inputObsApiKey.value || "";
 
@@ -4318,7 +4324,7 @@ floors: ${posts.length}
     async function buildImageMapForExport(posts, settings, options = {}) {
         const exportTarget = options?.target === "markdown" ? "markdown" : "obsidian";
         const topicId = String(options?.topicId || "").trim();
-        const imgMode = settings?.obsidian?.imgMode || DEFAULTS.obsImgMode;
+        const imgMode = normalizeObsidianImageMode(settings?.obsidian?.imgMode);
         const imgUrls = imgMode === "none" ? [] : collectImageUrlsFromPosts(posts);
         const imgMap = {};
 
@@ -4366,6 +4372,8 @@ floors: ${posts.length}
                 done += 1;
                 ui.setProgress(done, imgUrls.length, "保存图片");
             }
+        } else if (imgMode === "local-plus" && imgUrls.length > 0 && exportTarget === "obsidian") {
+            ui.setStatus("正在保留远程图片链接…", "#a855f7");
         }
 
         return imgMap;

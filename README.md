@@ -13,13 +13,13 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 - `discourse2MD-cn.js`
 - `discourse2MD-en.js`
 
-两者是同一个工具的不同界面语言版本，共用同一套 userscript 身份与配置。安装时请选择其中一个，不要同时启用两份。
+它们是同一个工具的不同界面语言版本，共用同一套 userscript 身份与配置。安装时请选择其中一个，不要同时启用两份。
 
 脚本当前支持：
 
 - 导出到浏览器下载的 Markdown 文件
 - 通过 Obsidian Local REST API 直接写入笔记
-- 图片处理：`file` / `base64` / `none`
+- 图片存储：`file` / `local-plus` / `base64` / `none`
 - 导出模板：`forum` / `clean`
 - 多种筛选条件：楼层范围、只看楼主、图片筛选、指定用户、关键词、最少字数
 - AI 过滤低信息量回复
@@ -51,6 +51,12 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 - 脚本默认连接地址为 `https://127.0.0.1:27124`。
 - 如果本地 HTTPS 证书未被信任，脚本会自动尝试回退到本机 HTTP。
 
+### 3. 如需使用 `local-plus` 存储模式，再安装 Local Images Plus
+
+1. 在 Obsidian 社区插件中搜索并安装 [Local Images Plus](https://github.com/Sergei-Korneev/obsidian-local-images-plus)。
+2. 按你的 Vault 习惯配置附件目录和本地化行为。
+3. 使用统一脚本以 `local-plus` 模式导出后，在 Obsidian 中运行 Local Images Plus，把笔记中的远程图片转成本地附件。
+
 ## 安装步骤
 
 1. 在 userscript 管理器中导入脚本。
@@ -60,6 +66,11 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 3. 保存并启用脚本。
 4. 打开任意匹配的 Discourse 主题页。
 5. 页面右下角会出现导出按钮，点击后可展开导出面板。
+
+旧版本说明：
+
+- 如果你之前安装的是 `local-images-plus/` 变体，需要手动切换到统一脚本，并重新选择存储模式。
+- 本次合并不会迁移旧变体的 userscript 配置。
 
 ## 配置说明
 
@@ -76,7 +87,7 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 | API Key | 从 Obsidian 插件设置中复制 | 必填（仅 Obsidian 导出） |
 | 根目录 | Vault 内的顶层导出路径，可多级 | 默认 `Linux.do` |
 | 分类 | 当前根目录下的单层分类目录 | 默认 `未分类` |
-| 图片模式 | `file` / `base64` / `none` | 默认 `file` |
+| 存储模式 | `file` / `local-plus` / `base64` / `none` | 默认 `file` |
 | 图片目录 | 图片保存目录，仅 `file` 模式生效 | 默认 `attachments` |
 
 ### 根目录、分类与图片目录规则
@@ -87,23 +98,26 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 - 新配置下，图片目录会相对于当前根目录解析。
 - 如果所选根目录或分类目录尚不存在，首次导出时会自动创建。
 
-### 图片模式对比
+### 存储模式对比
 
 | 模式 | 说明 | 优点 | 适合场景 |
 | --- | --- | --- | --- |
 | `file` | 将图片写入 Vault，并在笔记中用 `![[...]]` 引用 | 笔记体积更小，图片可复用 | 长期归档到 Obsidian |
+| `local-plus` | 保留远程图片链接，后续由 Local Images Plus 本地化 | 不需要脚本直写图片文件，方便交给 Vault 侧统一处理 | 已在 Obsidian 中使用 Local Images Plus |
 | `base64` | 直接把图片嵌入 Markdown | 单文件完整，迁移方便 | 想保留单文件笔记 |
 | `none` | 不导出图片 | 文件最小 | 只关心文字内容 |
 
 补充说明：
 
-- `导出 Markdown` 时，脚本会默认使用 Base64 内嵌图片，不受 Obsidian 图片模式设置影响。
-- `导出到 Obsidian` 时，图片模式才会按面板中的设置生效。
-- 当图片模式为 `file` 时，实际图片路径类似：
+- `导出 Markdown` 时，脚本会默认使用 Base64 内嵌图片，不受 Obsidian 存储模式设置影响。
+- `导出到 Obsidian` 时，存储模式才会按面板中的设置生效。
+- 当存储模式为 `file` 时，实际图片路径类似：
 
 ```text
 <根目录>/<图片目录>/<topicId>/
 ```
+
+- 当存储模式为 `local-plus` 时，脚本会保留远程图片链接，不会直写图片文件。
 
 ### 目录概览与重复主题检测
 
@@ -127,7 +141,7 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 1. 打开目标 Discourse 主题页。
 2. 在 `Obsidian 连接设置` 中填写 `API 地址` 和 `API Key`。
 3. 点击 `测试连接` 确认配置可用。
-4. 选择根目录、分类、图片模式和图片目录。
+4. 选择根目录、分类、存储模式，以及在 `file` 模式下使用的图片目录。
 5. 在 `导出风格` 中选择模板，并按需设置筛选条件。
 6. 点击 `导出到 Obsidian`。
 7. 成功后，笔记会直接写入你指定的 Obsidian Vault 路径。
