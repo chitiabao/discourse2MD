@@ -1,0 +1,19 @@
+# Local caches
+.npm-cache/
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
