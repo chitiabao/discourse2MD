@@ -140,7 +140,8 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 
 - 导出 YAML frontmatter。
 - 导出帖子信息摘要。
-- 按楼层生成 Callout，保留发言顺序、发言者和回复关系。
+- 首帖正文与 `clean` 模式一致，尽量保留原始 Markdown 渲染结构。
+- 后续回复按楼层生成 Callout，保留发言顺序、发言者和回复关系。
 - 如果启用了筛选，摘要中会写入筛选条件。
 
 #### `clean`
@@ -231,14 +232,14 @@ floors: 50
 > - **筛选条件**: 首帖=强制保留；范围=1-50
 ```
 
-### 楼层 Callout
+### 回复楼层 Callout
 
-楼主楼层使用 `[!success]`，其他用户楼层使用 `[!note]`：
+`forum` 模式中，首帖正文按 `clean` 导出；后续回复楼层使用 Callout。楼主回复使用 `[!success]`，其他用户回复使用 `[!note]`：
 
 ```markdown
-> [!success]+ #1 用户名 (@username) 🏠 楼主 · 2024/1/1 12:00:00
+> [!success]+ #2 用户名 (@username) 🏠 楼主 · 2024/1/1 12:00:00
 > 帖子内容...
-> ^floor-1
+> ^floor-2
 ```
 
 如果是回复其他楼层，导出内容中还会附带回复锚点：

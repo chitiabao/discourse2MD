@@ -140,7 +140,8 @@ The script shows a directory overview for the selected root and category, then s
 
 - Exports YAML frontmatter.
 - Includes a topic summary block.
-- Outputs posts as callouts, preserving order, author information, and reply relations.
+- Exports the first post body the same way as `clean`, preserving Markdown structure as much as possible.
+- Outputs follow-up replies as callouts, preserving order, author information, and reply relations.
 - If filtering is enabled, the filter summary is written into the exported note.
 
 #### `clean`
@@ -231,14 +232,14 @@ Notes:
 > - **Filters**: First post=always kept; Range=1-50
 ```
 
-### Post callout
+### Reply post callout
 
-OP posts use `[!success]`, while other users use `[!note]`:
+In `forum` mode, the first post body is exported like `clean`; follow-up replies use callouts. OP replies use `[!success]`, while other users use `[!note]`:
 
 ```markdown
-> [!success]+ #1 Username (@username) 🏠 OP · 1/1/2024, 12:00:00 PM
+> [!success]+ #2 Username (@username) 🏠 OP · 1/1/2024, 12:00:00 PM
 > Post content...
-> ^floor-1
+> ^floor-2
 ```
 
 When a post replies to another floor, the export also includes a reply anchor:

@@ -4078,19 +4078,35 @@ floors: ${posts.length}
             const primaryPost = getPrimaryPost(posts);
             if (!primaryPost) throw new Error("未找到首帖，无法按纯净风格导出");
 
-            const bodyMd = cookedToMarkdown(primaryPost.cooked || "", settings, imgMap);
+            const bodyMd = renderPrimaryPostMarkdown(primaryPost, settings, imgMap);
             if (bodyMd) {
                 content += `${bodyMd}\n`;
             }
             return frontmatter + content;
         }
 
-        for (const p of posts) {
+        const { firstPost, remainingPosts } = splitPinnedFirstPost(posts);
+        if (!firstPost) throw new Error("未找到首帖，无法按论坛风格导出");
+
+        const firstPostMd = renderPrimaryPostMarkdown(firstPost, settings, imgMap, { includeAnchor: true });
+        if (firstPostMd) {
+            content += `${firstPostMd}\n\n`;
+        }
+
+        for (const p of remainingPosts) {
             content += generatePostCallout(p, topic, settings, imgMap);
             content += "\n";
         }
 
         return frontmatter + content;
+    }
+
+    function renderPrimaryPostMarkdown(post, settings, imgMap, options = {}) {
+        const bodyMd = cookedToMarkdown(post?.cooked || "", settings, imgMap);
+        if (!options.includeAnchor) return bodyMd;
+
+        const anchor = `^floor-${Number(post?.post_number || 1)}`;
+        return bodyMd ? `${bodyMd}\n\n${anchor}` : anchor;
     }
 
     function generatePostCallout(post, topic, settings, imgMap) {
