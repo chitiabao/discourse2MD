@@ -3826,6 +3826,226 @@
         return parts.join("；");
     }
 
+    function buildActiveForumFilterDetails(settings, topic) {
+        const { rangeMode, rangeStart, rangeEnd, filters } = settings || {};
+        const activeFilters = [];
+
+        if (rangeMode === "range") activeFilters.push(`楼层范围：${rangeStart}-${rangeEnd}`);
+        if (filters?.onlyOp) activeFilters.push(`只看楼主：@${topic?.opUsername || "OP"}`);
+        if (filters?.imgFilter === "withImg") activeFilters.push("图片筛选：仅含图");
+        if (filters?.imgFilter === "noImg") activeFilters.push("图片筛选：仅无图");
+        if (String(filters?.users || "").trim()) activeFilters.push(`指定用户：${String(filters.users).trim()}`);
+        if (String(filters?.include || "").trim()) activeFilters.push(`包含关键词：${String(filters.include).trim()}`);
+        if (String(filters?.exclude || "").trim()) activeFilters.push(`排除关键词：${String(filters.exclude).trim()}`);
+        if ((filters?.minLen || 0) > 0) activeFilters.push(`最少字数：${filters.minLen}`);
+        if (settings?.ai?.enabled) activeFilters.push("AI过滤：已启用");
+
+        return activeFilters;
+    }
+
+    function buildForumExportDiagnostics(topic, posts, settings, options = {}) {
+        const totalPosts = Array.isArray(posts) ? posts.length : 0;
+        const nonFirstPostCount = clampInt(
+            options.nonFirstPostCount,
+            0,
+            totalPosts,
+            Math.max(totalPosts - 1, 0)
+        );
+        const ruleSelectedCount = clampInt(
+            options.ruleSelectedCount,
+            0,
+            nonFirstPostCount,
+            nonFirstPostCount
+        );
+        const localSelectedCount = clampInt(
+            options.localSelectedCount,
+            0,
+            ruleSelectedCount,
+            ruleSelectedCount
+        );
+        const aiSelectedCount = clampInt(
+            options.aiSelectedCount,
+            0,
+            localSelectedCount,
+            localSelectedCount
+        );
+        const finalNonFirstCount = clampInt(
+            options.finalNonFirstCount,
+            0,
+            nonFirstPostCount,
+            aiSelectedCount
+        );
+        const localRemovedCount = clampInt(
+            options.localRemovedCount,
+            0,
+            ruleSelectedCount,
+            Math.max(ruleSelectedCount - localSelectedCount, 0)
+        );
+        const aiRemovedCount = clampInt(
+            options.aiRemovedCount,
+            0,
+            localSelectedCount,
+            Math.max(localSelectedCount - aiSelectedCount, 0)
+        );
+        const finalSelectedCount = clampInt(
+            options.finalSelectedCount,
+            0,
+            totalPosts,
+            finalNonFirstCount + (options.hasFirstPost === false ? 0 : 1)
+        );
+
+        return {
+            mode: "forum",
+            totalPosts,
+            nonFirstPostCount,
+            ruleSelectedCount,
+            localSelectedCount,
+            aiSelectedCount,
+            finalNonFirstCount,
+            finalSelectedCount,
+            localRemovedCount,
+            aiRemovedCount,
+            localFilterApplied: !!options.localFilterApplied,
+            aiEnabled: !!settings?.ai?.enabled,
+            aiApplied: !!options.aiApplied,
+            aiWarning: String(options.aiWarning || "").trim(),
+            activeFilters: buildActiveForumFilterDetails(settings, topic),
+        };
+    }
+
+    function getForumOnlyFirstPostStageInfo(diagnostics) {
+        const fallback = {
+            label: "筛选流程",
+            message: "当前主题实际包含回复，但筛选流程最终没有保留任何非首帖回复，所以论坛模式最终只剩首帖。",
+        };
+        if (!diagnostics) return fallback;
+
+        if ((diagnostics.ruleSelectedCount || 0) === 0) {
+            return {
+                label: "规则筛选",
+                message: "当前主题实际包含回复，但这些回复在规则筛选阶段已全部被排除，所以论坛模式最终只剩首帖。",
+            };
+        }
+
+        if ((diagnostics.localSelectedCount || 0) === 0 && (diagnostics.localRemovedCount || 0) > 0) {
+            return {
+                label: "本地元评论过滤",
+                message: "当前主题实际包含回复，但规则筛选后的候选回复在本地元评论过滤阶段已全部被排除，所以论坛模式最终只剩首帖。",
+            };
+        }
+
+        if (diagnostics.aiApplied && (diagnostics.aiSelectedCount || 0) === 0 && (diagnostics.aiRemovedCount || 0) > 0) {
+            return {
+                label: "AI过滤",
+                message: "当前主题实际包含回复，但本地过滤后的候选回复在 AI 过滤阶段已全部被排除，所以论坛模式最终只剩首帖。",
+            };
+        }
+
+        if (diagnostics.aiWarning) {
+            return {
+                label: "筛选流程",
+                message: "当前主题实际包含回复，但筛选流程最终没有保留任何非首帖回复。AI 过滤曾失败并已回退，因此当前结果不是抓取失败，而是前面阶段已把回复清空。",
+            };
+        }
+
+        return fallback;
+    }
+
+    function buildForumDiagnosticCountItems(diagnostics) {
+        if (!diagnostics) return [];
+
+        let localNote = "";
+        if (!diagnostics.localFilterApplied) {
+            localNote = diagnostics.aiEnabled ? "未执行" : "未启用";
+        } else if ((diagnostics.localRemovedCount || 0) > 0) {
+            localNote = `剔除${diagnostics.localRemovedCount}条`;
+        }
+
+        let aiNote = "";
+        if (diagnostics.aiApplied) {
+            if ((diagnostics.aiRemovedCount || 0) > 0) aiNote = `剔除${diagnostics.aiRemovedCount}条`;
+        } else if (diagnostics.aiWarning) {
+            aiNote = "失败，已回退";
+        } else if (!diagnostics.aiEnabled) {
+            aiNote = "未启用";
+        } else if ((diagnostics.localSelectedCount || 0) === 0) {
+            aiNote = "无候选，未执行";
+        } else {
+            aiNote = "未执行";
+        }
+
+        const formatLine = (label, count, note = "") => note ? `${label}：${count}（${note}）` : `${label}：${count}`;
+
+        return [
+            formatLine("主题总帖数", diagnostics.totalPosts),
+            formatLine("非首帖回复", diagnostics.nonFirstPostCount),
+            formatLine("规则筛选后", diagnostics.ruleSelectedCount),
+            formatLine("本地元评论过滤后", diagnostics.localSelectedCount, localNote),
+            formatLine("AI过滤后", diagnostics.aiSelectedCount, aiNote),
+            formatLine(
+                "最终导出",
+                diagnostics.finalSelectedCount,
+                diagnostics.finalNonFirstCount === 0 && diagnostics.nonFirstPostCount > 0 ? "仅首帖" : ""
+            ),
+        ];
+    }
+
+    function buildForumOnlyFirstPostWarning(diagnostics) {
+        if (!diagnostics || diagnostics.mode !== "forum") return null;
+        if ((diagnostics.nonFirstPostCount || 0) <= 0) return null;
+        if ((diagnostics.finalNonFirstCount || 0) > 0) return null;
+
+        const stageInfo = getForumOnlyFirstPostStageInfo(diagnostics);
+        return {
+            title: "论坛模式最终仅导出首帖",
+            message: stageInfo.message,
+            sections: [
+                {
+                    title: "阶段计数",
+                    items: buildForumDiagnosticCountItems(diagnostics),
+                },
+                {
+                    title: "当前生效的筛选条件",
+                    items: diagnostics.activeFilters.length ? diagnostics.activeFilters : ["无显式筛选条件"],
+                },
+            ],
+            confirmText: "继续导出",
+            statusNote: `最终仅导出首帖（原因：${stageInfo.label}）`,
+        };
+    }
+
+    function buildForumExportDiagnosticNote(diagnostics) {
+        if (!diagnostics || diagnostics.mode !== "forum") return "";
+        if ((diagnostics.nonFirstPostCount || 0) === 0) return "未检测到任何非首帖回复";
+
+        if ((diagnostics.finalNonFirstCount || 0) === 0) {
+            const stageInfo = getForumOnlyFirstPostStageInfo(diagnostics);
+            return `最终仅导出首帖（${stageInfo.label}）`;
+        }
+
+        const hasMeaningfulDrop =
+            diagnostics.ruleSelectedCount !== diagnostics.nonFirstPostCount ||
+            diagnostics.localSelectedCount !== diagnostics.ruleSelectedCount ||
+            diagnostics.aiSelectedCount !== diagnostics.localSelectedCount ||
+            diagnostics.finalNonFirstCount !== diagnostics.nonFirstPostCount;
+
+        if (!diagnostics.activeFilters.length && !hasMeaningfulDrop && !diagnostics.aiWarning) {
+            return "";
+        }
+
+        const parts = [
+            `非首帖=${diagnostics.nonFirstPostCount}`,
+            `规则后=${diagnostics.ruleSelectedCount}`,
+        ];
+        if (diagnostics.aiEnabled) {
+            parts.push(`本地后=${diagnostics.localSelectedCount}`);
+            parts.push(`AI后=${diagnostics.aiSelectedCount}`);
+        }
+        parts.push(`最终=${diagnostics.finalNonFirstCount}`);
+
+        return `回复统计：${parts.join("/")}`;
+    }
+
     // -----------------------
     // 图片处理
     // -----------------------
@@ -4336,8 +4556,10 @@ floors: ${posts.length}
     // -----------------------
     // 导出主流程
     // -----------------------
-    function buildExportOutcomeNotes(aiOutcome, extraNotes = []) {
+    function buildExportOutcomeNotes(aiOutcome, extraNotes = [], diagnostics = null) {
         const notes = Array.isArray(extraNotes) ? [...extraNotes] : [];
+        const diagnosticNote = buildForumExportDiagnosticNote(diagnostics);
+        if (diagnosticNote) notes.push(diagnosticNote);
         if ((aiOutcome?.localRemovedCount || 0) > 0) notes.push(`元评论过滤${aiOutcome.localRemovedCount}条`);
         if (aiOutcome?.warning) {
             notes.push(aiOutcome.warning);
@@ -4377,6 +4599,7 @@ floors: ${posts.length}
         let selected = [];
         let filterSummary = "";
         let aiOutcome = { applied: false, removedCount: 0, localRemovedCount: 0, warning: "" };
+        let diagnostics = { mode: isCleanTemplate ? "clean" : "forum" };
 
         if (isCleanTemplate) {
             const primaryPost = getPrimaryPost(data.posts);
@@ -4389,12 +4612,18 @@ floors: ${posts.length}
             const { selectedPosts: selectedNonFirstPosts } = applyFiltersToNonFirstPosts(data.topic, remainingPosts, settings);
             let finalNonFirstPosts = selectedNonFirstPosts;
             const topicContext = buildTopicContext(firstPost);
+            let localSelectedCount = selectedNonFirstPosts.length;
+            let aiSelectedCount = selectedNonFirstPosts.length;
+            let localFilterApplied = false;
 
             if (settings.ai?.enabled && selectedNonFirstPosts.length > 0) {
                 const plainCache = buildPlainCache(selectedNonFirstPosts);
                 const localFilterResult = applyLocalMetaCommentaryFilter(selectedNonFirstPosts, plainCache);
+                localFilterApplied = true;
                 aiOutcome.localRemovedCount = localFilterResult.removedCount;
                 finalNonFirstPosts = localFilterResult.selectedPosts;
+                localSelectedCount = finalNonFirstPosts.length;
+                aiSelectedCount = finalNonFirstPosts.length;
 
                 try {
                     if (finalNonFirstPosts.length > 0) {
@@ -4408,6 +4637,7 @@ floors: ${posts.length}
                         aiOutcome.applied = aiResult.applied;
                         aiOutcome.removedCount = aiResult.removedCount;
                         finalNonFirstPosts = aiResult.selectedPosts;
+                        aiSelectedCount = finalNonFirstPosts.length;
                     }
                 } catch (error) {
                     console.warn("AI 过滤失败:", error);
@@ -4416,12 +4646,32 @@ floors: ${posts.length}
             }
 
             selected = mergeFirstPostBack(firstPost, finalNonFirstPosts);
+            diagnostics = buildForumExportDiagnostics(data.topic, data.posts, settings, {
+                hasFirstPost: !!firstPost,
+                nonFirstPostCount: remainingPosts.length,
+                ruleSelectedCount: selectedNonFirstPosts.length,
+                localSelectedCount,
+                aiSelectedCount,
+                finalNonFirstCount: finalNonFirstPosts.length,
+                finalSelectedCount: selected.length,
+                localRemovedCount: aiOutcome.localRemovedCount,
+                aiRemovedCount: aiOutcome.removedCount,
+                localFilterApplied,
+                aiApplied: aiOutcome.applied,
+                aiWarning: aiOutcome.warning,
+            });
             filterSummary = buildFilterSummary(settings, data.topic, {
                 keepFirstPost: true,
                 localRemovedCount: aiOutcome.localRemovedCount,
                 aiApplied: aiOutcome.applied,
                 aiRemovedCount: aiOutcome.removedCount,
             });
+
+            const onlyFirstPostWarning = buildForumOnlyFirstPostWarning(diagnostics);
+            if (onlyFirstPostWarning) {
+                await ui.showNoticeDialog(onlyFirstPostWarning);
+                ui.setStatus(`⚠️ ${onlyFirstPostWarning.statusNote}`, "#facc15");
+            }
         }
 
         return {
@@ -4433,6 +4683,7 @@ floors: ${posts.length}
             filename: buildMarkdownFilename(data.topic),
             filterSummary,
             aiOutcome,
+            diagnostics,
         };
     }
 
@@ -4549,7 +4800,7 @@ floors: ${posts.length}
             triggerBrowserDownload(downloadUrl, payload.filename);
 
             ui.setProgress(1, 1, "导出完成");
-            const finalNotes = buildExportOutcomeNotes(payload.aiOutcome);
+            const finalNotes = buildExportOutcomeNotes(payload.aiOutcome, [], payload.diagnostics);
             const suffix = finalNotes.length ? `（${finalNotes.join("；")}）` : "";
             ui.setStatus(`✅ 已下载 Markdown: ${payload.filename}${suffix}`, "#6ee7b7");
         } catch (e) {
@@ -4594,7 +4845,8 @@ floors: ${posts.length}
             ui.setProgress(1, 1, "导出完成");
             const finalNotes = buildExportOutcomeNotes(
                 payload.aiOutcome,
-                writeResult.fallbackUsed ? [`已自动切换到 ${writeResult.effectiveApiUrl}`] : []
+                writeResult.fallbackUsed ? [`已自动切换到 ${writeResult.effectiveApiUrl}`] : [],
+                payload.diagnostics
             );
             const suffix = finalNotes.length ? `（${finalNotes.join("；")}）` : "";
             ui.setStatus(`✅ 已导出到 Obsidian: ${targetPathResult.fullPath}${suffix}`, "#6ee7b7");

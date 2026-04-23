@@ -3826,6 +3826,226 @@
         return parts.join("; ");
     }
 
+    function buildActiveForumFilterDetails(settings, topic) {
+        const { rangeMode, rangeStart, rangeEnd, filters } = settings || {};
+        const activeFilters = [];
+
+        if (rangeMode === "range") activeFilters.push(`Post range: ${rangeStart}-${rangeEnd}`);
+        if (filters?.onlyOp) activeFilters.push(`OP only: @${topic?.opUsername || "OP"}`);
+        if (filters?.imgFilter === "withImg") activeFilters.push("Image filter: posts with images only");
+        if (filters?.imgFilter === "noImg") activeFilters.push("Image filter: posts without images only");
+        if (String(filters?.users || "").trim()) activeFilters.push(`Users: ${String(filters.users).trim()}`);
+        if (String(filters?.include || "").trim()) activeFilters.push(`Include keywords: ${String(filters.include).trim()}`);
+        if (String(filters?.exclude || "").trim()) activeFilters.push(`Exclude keywords: ${String(filters.exclude).trim()}`);
+        if ((filters?.minLen || 0) > 0) activeFilters.push(`Minimum length: ${filters.minLen}`);
+        if (settings?.ai?.enabled) activeFilters.push("AI filtering: enabled");
+
+        return activeFilters;
+    }
+
+    function buildForumExportDiagnostics(topic, posts, settings, options = {}) {
+        const totalPosts = Array.isArray(posts) ? posts.length : 0;
+        const nonFirstPostCount = clampInt(
+            options.nonFirstPostCount,
+            0,
+            totalPosts,
+            Math.max(totalPosts - 1, 0)
+        );
+        const ruleSelectedCount = clampInt(
+            options.ruleSelectedCount,
+            0,
+            nonFirstPostCount,
+            nonFirstPostCount
+        );
+        const localSelectedCount = clampInt(
+            options.localSelectedCount,
+            0,
+            ruleSelectedCount,
+            ruleSelectedCount
+        );
+        const aiSelectedCount = clampInt(
+            options.aiSelectedCount,
+            0,
+            localSelectedCount,
+            localSelectedCount
+        );
+        const finalNonFirstCount = clampInt(
+            options.finalNonFirstCount,
+            0,
+            nonFirstPostCount,
+            aiSelectedCount
+        );
+        const localRemovedCount = clampInt(
+            options.localRemovedCount,
+            0,
+            ruleSelectedCount,
+            Math.max(ruleSelectedCount - localSelectedCount, 0)
+        );
+        const aiRemovedCount = clampInt(
+            options.aiRemovedCount,
+            0,
+            localSelectedCount,
+            Math.max(localSelectedCount - aiSelectedCount, 0)
+        );
+        const finalSelectedCount = clampInt(
+            options.finalSelectedCount,
+            0,
+            totalPosts,
+            finalNonFirstCount + (options.hasFirstPost === false ? 0 : 1)
+        );
+
+        return {
+            mode: "forum",
+            totalPosts,
+            nonFirstPostCount,
+            ruleSelectedCount,
+            localSelectedCount,
+            aiSelectedCount,
+            finalNonFirstCount,
+            finalSelectedCount,
+            localRemovedCount,
+            aiRemovedCount,
+            localFilterApplied: !!options.localFilterApplied,
+            aiEnabled: !!settings?.ai?.enabled,
+            aiApplied: !!options.aiApplied,
+            aiWarning: String(options.aiWarning || "").trim(),
+            activeFilters: buildActiveForumFilterDetails(settings, topic),
+        };
+    }
+
+    function getForumOnlyFirstPostStageInfo(diagnostics) {
+        const fallback = {
+            label: "filter pipeline",
+            message: "This topic does contain replies, but the filtering pipeline ultimately kept no non-first-post replies, so forum mode ended up exporting only the first post.",
+        };
+        if (!diagnostics) return fallback;
+
+        if ((diagnostics.ruleSelectedCount || 0) === 0) {
+            return {
+                label: "rule-based filtering",
+                message: "This topic does contain replies, but all of them were removed by the rule-based filters, so forum mode ended up exporting only the first post.",
+            };
+        }
+
+        if ((diagnostics.localSelectedCount || 0) === 0 && (diagnostics.localRemovedCount || 0) > 0) {
+            return {
+                label: "local meta-only filtering",
+                message: "This topic does contain replies, but every reply that survived the rule-based filters was removed by the local meta-only filter, so forum mode ended up exporting only the first post.",
+            };
+        }
+
+        if (diagnostics.aiApplied && (diagnostics.aiSelectedCount || 0) === 0 && (diagnostics.aiRemovedCount || 0) > 0) {
+            return {
+                label: "AI filtering",
+                message: "This topic does contain replies, but every reply that survived the local filter was removed by AI filtering, so forum mode ended up exporting only the first post.",
+            };
+        }
+
+        if (diagnostics.aiWarning) {
+            return {
+                label: "filter pipeline",
+                message: "This topic does contain replies, but the filtering pipeline ultimately kept no non-first-post replies. AI filtering failed and fell back, so this result reflects earlier filtering stages rather than a fetch failure.",
+            };
+        }
+
+        return fallback;
+    }
+
+    function buildForumDiagnosticCountItems(diagnostics) {
+        if (!diagnostics) return [];
+
+        let localNote = "";
+        if (!diagnostics.localFilterApplied) {
+            localNote = diagnostics.aiEnabled ? "not run" : "disabled";
+        } else if ((diagnostics.localRemovedCount || 0) > 0) {
+            localNote = `removed ${diagnostics.localRemovedCount}`;
+        }
+
+        let aiNote = "";
+        if (diagnostics.aiApplied) {
+            if ((diagnostics.aiRemovedCount || 0) > 0) aiNote = `removed ${diagnostics.aiRemovedCount}`;
+        } else if (diagnostics.aiWarning) {
+            aiNote = "failed; fell back";
+        } else if (!diagnostics.aiEnabled) {
+            aiNote = "disabled";
+        } else if ((diagnostics.localSelectedCount || 0) === 0) {
+            aiNote = "no candidates; not run";
+        } else {
+            aiNote = "not run";
+        }
+
+        const formatLine = (label, count, note = "") => note ? `${label}: ${count} (${note})` : `${label}: ${count}`;
+
+        return [
+            formatLine("Total posts", diagnostics.totalPosts),
+            formatLine("Non-first replies", diagnostics.nonFirstPostCount),
+            formatLine("After rule-based filtering", diagnostics.ruleSelectedCount),
+            formatLine("After local meta-only filtering", diagnostics.localSelectedCount, localNote),
+            formatLine("After AI filtering", diagnostics.aiSelectedCount, aiNote),
+            formatLine(
+                "Final exported posts",
+                diagnostics.finalSelectedCount,
+                diagnostics.finalNonFirstCount === 0 && diagnostics.nonFirstPostCount > 0 ? "first post only" : ""
+            ),
+        ];
+    }
+
+    function buildForumOnlyFirstPostWarning(diagnostics) {
+        if (!diagnostics || diagnostics.mode !== "forum") return null;
+        if ((diagnostics.nonFirstPostCount || 0) <= 0) return null;
+        if ((diagnostics.finalNonFirstCount || 0) > 0) return null;
+
+        const stageInfo = getForumOnlyFirstPostStageInfo(diagnostics);
+        return {
+            title: "Forum mode ended up exporting only the first post",
+            message: stageInfo.message,
+            sections: [
+                {
+                    title: "Stage counts",
+                    items: buildForumDiagnosticCountItems(diagnostics),
+                },
+                {
+                    title: "Active filters",
+                    items: diagnostics.activeFilters.length ? diagnostics.activeFilters : ["No explicit filters are active"],
+                },
+            ],
+            confirmText: "Continue export",
+            statusNote: `Exporting only the first post (${stageInfo.label})`,
+        };
+    }
+
+    function buildForumExportDiagnosticNote(diagnostics) {
+        if (!diagnostics || diagnostics.mode !== "forum") return "";
+        if ((diagnostics.nonFirstPostCount || 0) === 0) return "No non-first-post replies were detected";
+
+        if ((diagnostics.finalNonFirstCount || 0) === 0) {
+            const stageInfo = getForumOnlyFirstPostStageInfo(diagnostics);
+            return `First post only (${stageInfo.label})`;
+        }
+
+        const hasMeaningfulDrop =
+            diagnostics.ruleSelectedCount !== diagnostics.nonFirstPostCount ||
+            diagnostics.localSelectedCount !== diagnostics.ruleSelectedCount ||
+            diagnostics.aiSelectedCount !== diagnostics.localSelectedCount ||
+            diagnostics.finalNonFirstCount !== diagnostics.nonFirstPostCount;
+
+        if (!diagnostics.activeFilters.length && !hasMeaningfulDrop && !diagnostics.aiWarning) {
+            return "";
+        }
+
+        const parts = [
+            `non-first=${diagnostics.nonFirstPostCount}`,
+            `after-rules=${diagnostics.ruleSelectedCount}`,
+        ];
+        if (diagnostics.aiEnabled) {
+            parts.push(`after-local=${diagnostics.localSelectedCount}`);
+            parts.push(`after-ai=${diagnostics.aiSelectedCount}`);
+        }
+        parts.push(`final=${diagnostics.finalNonFirstCount}`);
+
+        return `Reply diagnostics=${parts.join("/")}`;
+    }
+
     // -----------------------
     // Image handling
     // -----------------------
@@ -4336,8 +4556,10 @@ floors: ${posts.length}
     // -----------------------
     // Export flow
     // -----------------------
-    function buildExportOutcomeNotes(aiOutcome, extraNotes = []) {
+    function buildExportOutcomeNotes(aiOutcome, extraNotes = [], diagnostics = null) {
         const notes = Array.isArray(extraNotes) ? [...extraNotes] : [];
+        const diagnosticNote = buildForumExportDiagnosticNote(diagnostics);
+        if (diagnosticNote) notes.push(diagnosticNote);
         if ((aiOutcome?.localRemovedCount || 0) > 0) notes.push(`Meta-only removed ${aiOutcome.localRemovedCount} posts`);
         if (aiOutcome?.warning) {
             notes.push(aiOutcome.warning);
@@ -4377,6 +4599,7 @@ floors: ${posts.length}
         let selected = [];
         let filterSummary = "";
         let aiOutcome = { applied: false, removedCount: 0, localRemovedCount: 0, warning: "" };
+        let diagnostics = { mode: isCleanTemplate ? "clean" : "forum" };
 
         if (isCleanTemplate) {
             const primaryPost = getPrimaryPost(data.posts);
@@ -4389,12 +4612,18 @@ floors: ${posts.length}
             const { selectedPosts: selectedNonFirstPosts } = applyFiltersToNonFirstPosts(data.topic, remainingPosts, settings);
             let finalNonFirstPosts = selectedNonFirstPosts;
             const topicContext = buildTopicContext(firstPost);
+            let localSelectedCount = selectedNonFirstPosts.length;
+            let aiSelectedCount = selectedNonFirstPosts.length;
+            let localFilterApplied = false;
 
             if (settings.ai?.enabled && selectedNonFirstPosts.length > 0) {
                 const plainCache = buildPlainCache(selectedNonFirstPosts);
                 const localFilterResult = applyLocalMetaCommentaryFilter(selectedNonFirstPosts, plainCache);
+                localFilterApplied = true;
                 aiOutcome.localRemovedCount = localFilterResult.removedCount;
                 finalNonFirstPosts = localFilterResult.selectedPosts;
+                localSelectedCount = finalNonFirstPosts.length;
+                aiSelectedCount = finalNonFirstPosts.length;
 
                 try {
                     if (finalNonFirstPosts.length > 0) {
@@ -4408,6 +4637,7 @@ floors: ${posts.length}
                         aiOutcome.applied = aiResult.applied;
                         aiOutcome.removedCount = aiResult.removedCount;
                         finalNonFirstPosts = aiResult.selectedPosts;
+                        aiSelectedCount = finalNonFirstPosts.length;
                     }
                 } catch (error) {
                     console.warn("AI filtering failed:", error);
@@ -4416,12 +4646,32 @@ floors: ${posts.length}
             }
 
             selected = mergeFirstPostBack(firstPost, finalNonFirstPosts);
+            diagnostics = buildForumExportDiagnostics(data.topic, data.posts, settings, {
+                hasFirstPost: !!firstPost,
+                nonFirstPostCount: remainingPosts.length,
+                ruleSelectedCount: selectedNonFirstPosts.length,
+                localSelectedCount,
+                aiSelectedCount,
+                finalNonFirstCount: finalNonFirstPosts.length,
+                finalSelectedCount: selected.length,
+                localRemovedCount: aiOutcome.localRemovedCount,
+                aiRemovedCount: aiOutcome.removedCount,
+                localFilterApplied,
+                aiApplied: aiOutcome.applied,
+                aiWarning: aiOutcome.warning,
+            });
             filterSummary = buildFilterSummary(settings, data.topic, {
                 keepFirstPost: true,
                 localRemovedCount: aiOutcome.localRemovedCount,
                 aiApplied: aiOutcome.applied,
                 aiRemovedCount: aiOutcome.removedCount,
             });
+
+            const onlyFirstPostWarning = buildForumOnlyFirstPostWarning(diagnostics);
+            if (onlyFirstPostWarning) {
+                await ui.showNoticeDialog(onlyFirstPostWarning);
+                ui.setStatus(`⚠️ ${onlyFirstPostWarning.statusNote}`, "#facc15");
+            }
         }
 
         return {
@@ -4433,6 +4683,7 @@ floors: ${posts.length}
             filename: buildMarkdownFilename(data.topic),
             filterSummary,
             aiOutcome,
+            diagnostics,
         };
     }
 
@@ -4549,7 +4800,7 @@ floors: ${posts.length}
             triggerBrowserDownload(downloadUrl, payload.filename);
 
             ui.setProgress(1, 1, "Export complete");
-            const finalNotes = buildExportOutcomeNotes(payload.aiOutcome);
+            const finalNotes = buildExportOutcomeNotes(payload.aiOutcome, [], payload.diagnostics);
             const suffix = finalNotes.length ? `（${finalNotes.join("；")}）` : "";
             ui.setStatus(`✅ Markdown downloaded: ${payload.filename}${suffix}`, "#6ee7b7");
         } catch (e) {
@@ -4594,7 +4845,8 @@ floors: ${posts.length}
             ui.setProgress(1, 1, "Export complete");
             const finalNotes = buildExportOutcomeNotes(
                 payload.aiOutcome,
-                writeResult.fallbackUsed ? [`Automatically switched to ${writeResult.effectiveApiUrl}`] : []
+                writeResult.fallbackUsed ? [`Automatically switched to ${writeResult.effectiveApiUrl}`] : [],
+                payload.diagnostics
             );
             const suffix = finalNotes.length ? `（${finalNotes.join("；")}）` : "";
             ui.setStatus(`✅ Exported to Obsidian: ${targetPathResult.fullPath}${suffix}`, "#6ee7b7");
