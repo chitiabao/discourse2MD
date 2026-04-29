@@ -17,13 +17,14 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 
 脚本当前支持：
 
-- 导出到浏览器下载的 Markdown 文件
+- 导出到浏览器下载的通用 GFM Markdown 文件
 - 通过 Obsidian Local REST API 直接写入笔记
-- 图片存储：`file` / `local-plus` / `base64` / `none`
+- 下载版 Markdown 默认保留远程图片链接，避免使用 Obsidian 专属语法
+- Obsidian 图片存储：`file` / `local-plus` / `base64` / `none`
 - 导出模板：`forum` / `clean`
 - 多种筛选条件：楼层范围、只看楼主、图片筛选、指定用户、关键词、最少字数
 - AI 过滤低信息量回复
-- Obsidian Callout 格式和 YAML frontmatter
+- YAML frontmatter，以及面向 Obsidian 的增强格式导出
 - 重复主题检测、目录概览和浏览器下载兜底链接
 
 ## 安装前提
@@ -98,7 +99,7 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 - 新配置下，图片目录会相对于当前根目录解析。
 - 如果所选根目录或分类目录尚不存在，首次导出时会自动创建。
 
-### 存储模式对比
+### Obsidian 存储模式对比
 
 | 模式 | 说明 | 优点 | 适合场景 |
 | --- | --- | --- | --- |
@@ -109,7 +110,7 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 
 补充说明：
 
-- `导出 Markdown` 时，脚本会默认使用 Base64 内嵌图片，不受 Obsidian 存储模式设置影响。
+- `导出 Markdown` 时，脚本固定保留远程图片链接，输出标准 `![]()` 语法，不受 Obsidian 存储模式设置影响。
 - `导出到 Obsidian` 时，存储模式才会按面板中的设置生效。
 - 当存储模式为 `file` 时，实际图片路径类似：
 
@@ -135,7 +136,7 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 1. 打开目标 Discourse 主题页。
 2. 在 `导出风格` 中选择模板，并按需设置筛选条件。
 3. 点击 `导出 Markdown`。
-4. 脚本会生成浏览器下载。
+4. 脚本会按通用 GFM 语法生成浏览器下载，不包含 Obsidian 专属的 Callout、块引用锚点或 `![[...]]` 图片语法。
 5. 如果浏览器未自动保存，可点击面板中的兜底下载链接继续下载。
 
 ### 导出到 Obsidian
@@ -157,7 +158,9 @@ Discourse2MD 是一个运行在 Discourse 主题页上的 userscript，用来把
 - 导出 YAML frontmatter。
 - 导出帖子信息摘要。
 - 首帖正文与 `clean` 模式一致，尽量保留原始 Markdown 渲染结构。
-- 后续回复按楼层生成 Callout，保留发言顺序、发言者和回复关系。
+- 后续回复保留发言顺序、发言者和回复关系。
+- `导出 Markdown` 时，回复使用普通分节和标准锚点链接。
+- `导出到 Obsidian` 时，回复使用 Callout、块引用锚点和 wiki 链接。
 - 如果启用了筛选，摘要中会写入筛选条件。
 
 #### `clean`
@@ -234,7 +237,40 @@ floors: 50
 - `tags` 会包含主题原始标签，以及脚本追加的 `linuxdo` 标签。
 - `floors` 为最终导出的楼层数，而不是原帖总楼层数。
 
-### 帖子信息 Callout
+### 通用 Markdown 示例（导出 Markdown）
+
+```markdown
+## 帖子信息
+
+- **原始链接**: [https://example.com/t/topic/12345](https://example.com/t/topic/12345)
+- **主题 ID**: 12345
+- **楼主**: @username
+- **分类**: 分类名
+- **标签**: 标签1, linuxdo
+- **导出时间**: 2024/1/1 12:00:00
+- **楼层数**: 50
+- **筛选条件**: 首帖=强制保留；范围=1-50
+```
+
+`forum` 模式下，首帖正文按 `clean` 导出；后续回复改用普通分节和标准锚点：
+
+```markdown
+<a id="floor-2"></a>
+
+### #2 用户名 (@username) · 楼主 · 2024/1/1 12:00:00
+
+帖子内容...
+```
+
+如果是回复其他楼层，导出内容会使用普通链接：
+
+```markdown
+回复 [#12楼](#floor-12)
+```
+
+### Obsidian 增强格式示例（导出到 Obsidian）
+
+帖子信息摘要仍然使用 Callout：
 
 ```markdown
 > [!info] 帖子信息
@@ -248,17 +284,13 @@ floors: 50
 > - **筛选条件**: 首帖=强制保留；范围=1-50
 ```
 
-### 回复楼层 Callout
-
-`forum` 模式中，首帖正文按 `clean` 导出；后续回复楼层使用 Callout。楼主回复使用 `[!success]`，其他用户回复使用 `[!note]`：
+回复楼层使用 Callout、块引用锚点和 wiki 链接：
 
 ```markdown
 > [!success]+ #2 用户名 (@username) 🏠 楼主 · 2024/1/1 12:00:00
 > 帖子内容...
 > ^floor-2
 ```
-
-如果是回复其他楼层，导出内容中还会附带回复锚点：
 
 ```markdown
 > > 回复 [[#^floor-12|#12楼]]

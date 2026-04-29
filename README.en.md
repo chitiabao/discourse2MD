@@ -17,13 +17,14 @@ They are two UI languages for the same tool and share the same userscript identi
 
 Current capabilities:
 
-- export to a browser-downloaded Markdown file
+- export to a browser-downloaded generic GFM Markdown file
 - export directly to Obsidian through Local REST API
-- image storage: `file` / `local-plus` / `base64` / `none`
+- browser Markdown exports keep remote image links and avoid Obsidian-only syntax
+- Obsidian image storage: `file` / `local-plus` / `base64` / `none`
 - export templates: `forum` / `clean`
 - rule-based filters: post range, OP only, image filter, users, keywords, minimum length
 - AI filtering for low-value replies
-- YAML frontmatter and Obsidian callout formatting
+- YAML frontmatter plus Obsidian-enhanced export formatting
 - duplicate topic detection, directory overview, and fallback browser download link
 
 ## Prerequisites
@@ -98,7 +99,7 @@ Once you open a Discourse topic page, the script panel contains two main areas:
 - In the current configuration model, the image directory is resolved relative to the selected root.
 - If the selected root or category does not exist yet, it will be created on first export.
 
-### Storage mode comparison
+### Obsidian storage mode comparison
 
 | Mode | Description | Advantage | Best for |
 | --- | --- | --- | --- |
@@ -109,7 +110,7 @@ Once you open a Discourse topic page, the script panel contains two main areas:
 
 Additional notes:
 
-- `Export Markdown` always embeds images as Base64 and does not use the Obsidian storage mode setting.
+- `Export Markdown` always keeps remote image links and outputs standard `![]()` syntax, regardless of the Obsidian storage mode setting.
 - The storage mode setting only applies to `Export to Obsidian`.
 - In `file` mode, the effective image path looks like:
 
@@ -135,7 +136,7 @@ The script shows a directory overview for the selected root and category, then s
 1. Open the target Discourse topic page.
 2. Choose a template under `Export Style` and configure filters if needed.
 3. Click `Export Markdown`.
-4. The script will trigger a browser download.
+4. The script will trigger a browser download using generic GFM-compatible Markdown without Obsidian-only callouts, block references, or `![[...]]` image syntax.
 5. If the browser does not save automatically, use the fallback download link shown in the panel.
 
 ### Export to Obsidian
@@ -157,7 +158,9 @@ The script shows a directory overview for the selected root and category, then s
 - Exports YAML frontmatter.
 - Includes a topic summary block.
 - Exports the first post body the same way as `clean`, preserving Markdown structure as much as possible.
-- Outputs follow-up replies as callouts, preserving order, author information, and reply relations.
+- Preserves reply order, author information, and reply relations for follow-up replies.
+- In `Export Markdown`, replies use standard sections and regular anchor links.
+- In `Export to Obsidian`, replies use callouts, block references, and wiki-style links.
 - If filtering is enabled, the filter summary is written into the exported note.
 
 #### `clean`
@@ -234,7 +237,40 @@ Notes:
 - `tags` include the original topic tags plus the extra `linuxdo` tag added by the script.
 - `floors` is the final exported post count, not the total raw post count from the source topic.
 
-### Topic info callout
+### Generic Markdown example (`Export Markdown`)
+
+```markdown
+## Topic Info
+
+- **Source URL**: [https://example.com/t/topic/12345](https://example.com/t/topic/12345)
+- **Topic ID**: 12345
+- **OP**: @username
+- **Category**: Category Name
+- **Tags**: tag1, linuxdo
+- **Exported At**: 1/1/2024, 12:00:00 PM
+- **Posts**: 50
+- **Filters**: First post=always kept; Range=1-50
+```
+
+In `forum` mode, the first post body is exported like `clean`; follow-up replies use regular sections and standard anchors:
+
+```markdown
+<a id="floor-2"></a>
+
+### #2 Username (@username) · OP · 1/1/2024, 12:00:00 PM
+
+Post content...
+```
+
+When a post replies to another floor, the export uses a regular Markdown link:
+
+```markdown
+Reply to [post #12](#floor-12)
+```
+
+### Obsidian-enhanced example (`Export to Obsidian`)
+
+The topic summary still uses a callout:
 
 ```markdown
 > [!info] Topic Info
@@ -248,17 +284,13 @@ Notes:
 > - **Filters**: First post=always kept; Range=1-50
 ```
 
-### Reply post callout
-
-In `forum` mode, the first post body is exported like `clean`; follow-up replies use callouts. OP replies use `[!success]`, while other users use `[!note]`:
+Reply posts continue to use callouts, block references, and wiki-style links:
 
 ```markdown
 > [!success]+ #2 Username (@username) 🏠 OP · 1/1/2024, 12:00:00 PM
 > Post content...
 > ^floor-2
 ```
-
-When a post replies to another floor, the export also includes a reply anchor:
 
 ```markdown
 > > Reply to [[#^floor-12|post #12]]

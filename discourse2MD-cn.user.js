@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         Discourse2MD - Export to Obsidian
+// @name         Discourse2MD - Export Markdown / Obsidian
 // @namespace    https://discourse.org/
 // @version      1.0.0
 // @updateURL    https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-cn.user.js
 // @downloadURL  https://raw.githubusercontent.com/chitiabao/discourse2MD/main/discourse2MD-cn.user.js
-// @description  导出 Discourse 社区帖子到 Obsidian（支持 Local REST API、图片处理、Callout 格式）
+// @description  导出 Discourse 社区帖子到通用 Markdown 或 Obsidian（支持 Local REST API、图片处理）
 // @author       ilvsx
 // @license      MIT
 // @match        https://*/t/*
@@ -379,12 +379,57 @@
         };
     }
 
+    function normalizeExportTarget(target) {
+        return String(target || "").toLowerCase() === "markdown" ? "markdown" : "obsidian";
+    }
+
     function buildTargetExportSettings(settings, target) {
         const cloned = cloneExportSettings(settings);
-        if ((target || "") === "markdown") {
-            cloned.obsidian.imgMode = "base64";
+        cloned.obsidian.imgMode = normalizeObsidianImageMode(cloned.obsidian?.imgMode);
+        if (!cloned.obsidian.imgMode) {
+            cloned.obsidian.imgMode = DEFAULTS.obsImgMode;
         }
         return cloned;
+    }
+
+    function buildRenderContext(target, settings) {
+        const normalizedTarget = normalizeExportTarget(target);
+        if (normalizedTarget === "markdown") {
+            return {
+                target: "markdown",
+                flavor: "gfm",
+                imagePolicy: "remote",
+                replyStyle: "section",
+                anchorStyle: "html-id",
+            };
+        }
+
+        return {
+            target: "obsidian",
+            flavor: "obsidian",
+            imagePolicy: normalizeObsidianImageMode(settings?.obsidian?.imgMode),
+            replyStyle: "callout",
+            anchorStyle: "obsidian-blockref",
+        };
+    }
+
+    function isObsidianRenderContext(renderContext) {
+        return renderContext?.flavor === "obsidian";
+    }
+
+    function buildFloorAnchor(postNumber, renderContext) {
+        const floor = Math.max(1, Number(postNumber) || 1);
+        return renderContext?.anchorStyle === "html-id"
+            ? `<a id="floor-${floor}"></a>`
+            : `^floor-${floor}`;
+    }
+
+    function buildFloorReference(postNumber, renderContext, label) {
+        const floor = Math.max(1, Number(postNumber) || 1);
+        const resolvedLabel = label || `#${floor}`;
+        return renderContext?.anchorStyle === "html-id"
+            ? `[${resolvedLabel}](#floor-${floor})`
+            : `[[#^floor-${floor}|${resolvedLabel}]]`;
     }
 
     function extractTopicIdFromText(content) {
@@ -741,7 +786,8 @@
     // -----------------------
     // DOM -> Markdown
     // -----------------------
-    function cookedToMarkdown(cookedHtml, settings, imgMap) {
+    function cookedToMarkdown(cookedHtml, settings, imgMap, renderContext) {
+        const context = renderContext || buildRenderContext("markdown", settings);
         const parser = new DOMParser();
         const doc = parser.parseFromString(cookedHtml || "", "text/html");
         const root = doc.body;
@@ -869,7 +915,15 @@
 
                 const header = href ? `[${title}](${absoluteUrl(href)})` : title;
                 const lines = content.split("\n").filter((l) => l.trim());
-                return "\n> [!quote] " + header + "\n" + lines.map((l) => `> ${l}`).join("\n") + "\n\n";
+                if (isObsidianRenderContext(context)) {
+                    return "\n> [!quote] " + header + "\n" + lines.map((l) => `> ${l}`).join("\n") + "\n\n";
+                }
+
+                const quoteLines = [`> 引用：${header}`];
+                if (lines.length > 0) {
+                    quoteLines.push(...lines.map((l) => `> ${l}`));
+                }
+                return `\n${quoteLines.join("\n")}\n\n`;
             }
 
             if (tag === "aside" && el.classList.contains("onebox")) {
@@ -881,9 +935,12 @@
                 if (href) {
                     const link = `[${title || href}](${absoluteUrl(href)})`;
                     if (desc) {
-                        return `\n> [!info] ${link}\n> ${desc}\n\n`;
+                        if (isObsidianRenderContext(context)) {
+                            return `\n> [!info] ${link}\n> ${desc}\n\n`;
+                        }
+                        return `\n${link}\n\n${desc}\n\n`;
                     }
-                    return `\n${link}\n`;
+                    return `\n${link}\n\n`;
                 }
                 return "";
             }
@@ -904,22 +961,26 @@
                     return `:${emojiName}:`;
                 }
 
-                const full = absoluteUrl(src);
-                if (!full) return "";
+                const { asset: imageAsset, entry: imageEntry } = resolveImageMapEntry(el, imgMap);
+                const full = imageAsset?.displaySrc || absoluteUrl(src);
+                if (!full && !imageAsset?.preferredSrc) return "";
 
-                if (settings.obsidian && settings.obsidian.imgMode === "none") {
+                const imagePolicy = context?.imagePolicy || "remote";
+
+                if (imagePolicy === "none") {
                     return "";
                 }
 
                 const alt = "图片";
+                const preferredSrc = imageEntry?.preferredSrc || imageAsset?.preferredSrc || full;
 
-                if (settings.obsidian && settings.obsidian.imgMode === "file" && imgMap && imgMap[full]) {
-                    const filename = imgMap[full];
+                if (imagePolicy === "file" && imageEntry?.renderedValue) {
+                    const filename = imageEntry.renderedValue;
                     return `\n![[${filename}]]\n`;
-                } else if (settings.obsidian && settings.obsidian.imgMode === "base64" && imgMap && imgMap[full]) {
-                    return `\n![${alt}](${imgMap[full]})\n`;
+                } else if (imagePolicy === "base64" && imageEntry?.renderedValue) {
+                    return `\n![${alt}](${imageEntry.renderedValue})\n`;
                 } else {
-                    return `\n![${alt}](${full})\n`;
+                    return `\n![${alt}](${preferredSrc})\n`;
                 }
             }
 
@@ -3444,8 +3505,9 @@
 
     function buildPlainCache(posts) {
         const cache = new Map();
+        const renderContext = buildRenderContext("markdown");
         for (const p of posts) {
-        const text = cookedToMarkdown(p.cooked || "", {}, {});
+            const text = cookedToMarkdown(p.cooked || "", {}, {}, renderContext);
             cache.set(p.id, text || "");
         }
         return cache;
@@ -3582,7 +3644,7 @@
 
     function buildTopicContext(firstPost) {
         if (!firstPost) return "";
-        const bodyText = cookedToMarkdown(firstPost.cooked || "", {}, {});
+        const bodyText = cookedToMarkdown(firstPost.cooked || "", {}, {}, buildRenderContext("markdown"));
         return truncateFilterText(bodyText, 800);
     }
 
@@ -4049,28 +4111,128 @@
     // -----------------------
     // 图片处理
     // -----------------------
+    async function blobToDataUrl(blob) {
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+
+        return dataUrl;
+    }
+
     async function imageUrlToBase64(url) {
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error("HTTP " + res.status);
             const blob = await res.blob();
-
-            const dataUrl = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
-            });
-
-            return dataUrl;
+            return await blobToDataUrl(blob);
         } catch (e) {
             console.error("图片转换失败:", url, e);
             return url;
         }
     }
 
-    function collectImageUrlsFromPosts(posts) {
-        const urlSet = new Set();
+    function isLikelyDiscourseUploadUrl(url) {
+        try {
+            const parsed = new URL(url, window.location.origin);
+            return /\/(?:uploads|original|optimized)\//i.test(parsed.pathname);
+        } catch {
+            return false;
+        }
+    }
+
+    function isLikelyImageAssetUrl(url) {
+        if (!url) return false;
+        try {
+            const parsed = new URL(url, window.location.origin);
+            if (/\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif|tiff?)(\?.*)?$/i.test(parsed.pathname + parsed.search)) {
+                return true;
+            }
+            return isLikelyDiscourseUploadUrl(parsed.toString());
+        } catch {
+            return false;
+        }
+    }
+
+    function parseSrcsetLargestUrl(srcset) {
+        const items = String(srcset || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        let bestUrl = "";
+        let bestScore = -1;
+
+        for (const item of items) {
+            const parts = item.split(/\s+/).filter(Boolean);
+            const candidateUrl = absoluteUrl(parts[0] || "");
+            if (!candidateUrl) continue;
+
+            const descriptor = parts[1] || "";
+            const match = descriptor.match(/^([0-9]+(?:\.[0-9]+)?)(w|x)$/i);
+            let score = 0;
+            if (match) {
+                const numeric = parseFloat(match[1]);
+                score = match[2].toLowerCase() === "w" ? numeric * 1000 : numeric;
+            }
+
+            if (score >= bestScore) {
+                bestScore = score;
+                bestUrl = candidateUrl;
+            }
+        }
+
+        return bestUrl;
+    }
+
+    function toUniqueUrlList(values) {
+        const result = [];
+        const seen = new Set();
+        for (const value of values || []) {
+            const normalized = absoluteUrl(value);
+            if (!normalized) continue;
+            const key = normalizeCaseKey(normalized);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            result.push(normalized);
+        }
+        return result;
+    }
+
+    function resolveImageAssetFromElement(img) {
+        if (!img) return null;
+
+        const displaySrc = absoluteUrl(img.getAttribute("src") || img.getAttribute("data-src") || "");
+        const anchor = img.closest("a");
+        const anchorHref = absoluteUrl(anchor?.getAttribute("href") || "");
+        const downloadHref = absoluteUrl(anchor?.getAttribute("data-download-href") || img.getAttribute("data-download-href") || "");
+        const largeSrc = absoluteUrl(img.getAttribute("data-large-src") || anchor?.getAttribute("data-large-src") || "");
+        const srcsetLargest = parseSrcsetLargestUrl(img.getAttribute("srcset") || "");
+
+        const orderedCandidates = [];
+        if (anchorHref && isLikelyImageAssetUrl(anchorHref)) orderedCandidates.push(anchorHref);
+        if (downloadHref && isLikelyImageAssetUrl(downloadHref)) orderedCandidates.push(downloadHref);
+        if (largeSrc && isLikelyImageAssetUrl(largeSrc)) orderedCandidates.push(largeSrc);
+        if (srcsetLargest) orderedCandidates.push(srcsetLargest);
+        if (displaySrc) orderedCandidates.push(displaySrc);
+
+        const uniqueCandidates = toUniqueUrlList(orderedCandidates);
+        const preferredSrc = uniqueCandidates[0] || displaySrc;
+        if (!preferredSrc) return null;
+
+        const fallbackSrcs = uniqueCandidates.filter((url) => normalizeCaseKey(url) !== normalizeCaseKey(preferredSrc));
+
+        return {
+            displaySrc,
+            preferredSrc,
+            fallbackSrcs,
+        };
+    }
+
+    function collectImageAssetsFromPosts(posts) {
+        const assets = [];
+        const assetsByPreferred = new Map();
 
         for (const p of posts) {
             const div = document.createElement("div");
@@ -4079,19 +4241,110 @@
                 const src = img.getAttribute("src") || img.getAttribute("data-src") || "";
                 if (isDiscourseEmojiImage(src)) return;
 
-                const full = absoluteUrl(src);
-                if (full) urlSet.add(full);
+                const asset = resolveImageAssetFromElement(img);
+                if (!asset?.preferredSrc) return;
 
-                const a = img.closest("a");
-                if (a) {
-                    const href = a.getAttribute("href") || "";
-                    const h = absoluteUrl(href);
-                    if (h && /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(h)) urlSet.add(h);
+                const preferredKey = normalizeCaseKey(asset.preferredSrc);
+                const existing = assetsByPreferred.get(preferredKey);
+                if (existing) {
+                    const merged = toUniqueUrlList([
+                        existing.preferredSrc,
+                        asset.preferredSrc,
+                        ...(existing.fallbackSrcs || []),
+                        ...(asset.fallbackSrcs || []),
+                        existing.displaySrc,
+                        asset.displaySrc,
+                    ]);
+                    existing.displaySrc = existing.displaySrc || asset.displaySrc;
+                    existing.preferredSrc = merged[0] || existing.preferredSrc;
+                    existing.fallbackSrcs = merged.filter((url) => normalizeCaseKey(url) !== normalizeCaseKey(existing.preferredSrc));
+                } else {
+                    assetsByPreferred.set(preferredKey, {
+                        displaySrc: asset.displaySrc,
+                        preferredSrc: asset.preferredSrc,
+                        fallbackSrcs: asset.fallbackSrcs.slice(),
+                    });
                 }
             });
         }
 
-        return Array.from(urlSet);
+        for (const asset of assetsByPreferred.values()) {
+            assets.push(asset);
+        }
+
+        return assets;
+    }
+
+    function getImageAssetAliases(asset) {
+        return toUniqueUrlList([asset?.displaySrc, asset?.preferredSrc, ...(asset?.fallbackSrcs || [])]);
+    }
+
+    function registerImageMapEntry(imgMap, asset, entry) {
+        for (const alias of getImageAssetAliases(asset)) {
+            imgMap[alias] = entry;
+        }
+    }
+
+    async function fetchImageAssetBlob(asset) {
+        const candidates = toUniqueUrlList([asset?.preferredSrc, ...(asset?.fallbackSrcs || [])]);
+        let lastError = null;
+
+        for (const candidate of candidates) {
+            try {
+                const response = await fetch(candidate);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const blob = await response.blob();
+                return { blob, sourceUrl: candidate };
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        throw lastError || new Error("No image source available");
+    }
+
+    function getImageExtensionFromUrl(url) {
+        try {
+            const parsed = new URL(url, window.location.origin);
+            const pathname = parsed.pathname || "";
+            const match = pathname.match(/\.([a-z0-9]+)$/i);
+            if (!match) return "";
+            const ext = String(match[1] || "").toLowerCase();
+            return /^[a-z0-9]{1,5}$/i.test(ext) ? ext : "";
+        } catch {
+            return "";
+        }
+    }
+
+    function getImageExtensionFromMimeType(mimeType) {
+        const normalized = String(mimeType || "").toLowerCase();
+        if (normalized.includes("jpeg")) return "jpg";
+        if (normalized.includes("png")) return "png";
+        if (normalized.includes("gif")) return "gif";
+        if (normalized.includes("webp")) return "webp";
+        if (normalized.includes("bmp")) return "bmp";
+        if (normalized.includes("svg")) return "svg";
+        if (normalized.includes("avif")) return "avif";
+        if (normalized.includes("tiff")) return "tif";
+        return "";
+    }
+
+    function getImageFileExtension(url, mimeType) {
+        return getImageExtensionFromUrl(url) || getImageExtensionFromMimeType(mimeType) || "png";
+    }
+
+    function resolveImageMapEntry(img, imgMap) {
+        const asset = resolveImageAssetFromElement(img);
+        if (!asset) return { asset: null, entry: null };
+
+        const aliases = getImageAssetAliases(asset);
+        for (const alias of aliases) {
+            if (imgMap && imgMap[alias]) {
+                return { asset, entry: imgMap[alias] };
+            }
+        }
+
+        return { asset, entry: null };
     }
 
     // -----------------------
@@ -4327,9 +4580,32 @@
         return String(str || "").replace(/"/g, '\\"').replace(/\n/g, "\\n");
     }
 
-    function generateMarkdownDocument(topic, posts, settings, imgMap, filterSummary) {
+    function generateTopicInfoSection(topic, posts, filterSummary, now, exportTemplate, renderContext) {
+        const allTags = [...new Set([...(topic.tags || []), "linuxdo"])];
+        const lines = [
+            `**原始链接**: [${topic.url || ""}](${topic.url || ""})`,
+            `**主题 ID**: ${topic.topicId || 0}`,
+            `**楼主**: @${topic.opUsername || "未知"}`,
+            `**分类**: ${topic.category || "无"}`,
+            `**标签**: ${allTags.join(", ")}`,
+            `**导出时间**: ${now.toLocaleString("zh-CN")}`,
+            `**楼层数**: ${posts.length}`,
+        ];
+        if (exportTemplate === "forum" && filterSummary) {
+            lines.push(`**筛选条件**: ${filterSummary}`);
+        }
+
+        if (isObsidianRenderContext(renderContext)) {
+            return `> [!info] 帖子信息\n${lines.map((line) => `> - ${line}`).join("\n")}\n\n`;
+        }
+
+        return `## 帖子信息\n\n${lines.map((line) => `- ${line}`).join("\n")}\n\n`;
+    }
+
+    function generateMarkdownDocument(topic, posts, settings, imgMap, filterSummary, renderContext) {
         const now = new Date();
         const exportTemplate = normalizeExportTemplate(settings?.exportTemplate);
+        const context = renderContext || buildRenderContext("markdown", settings);
 
         const allTags = [...new Set([...(topic.tags || []), "linuxdo"])];
         const tagsYaml = allTags.map((t) => `  - "${escapeYaml(t)}"`).join("\n");
@@ -4346,27 +4622,16 @@ export_time: "${now.toISOString()}"
 floors: ${posts.length}
 ---
 
-`;
+        `;
 
         let content = `# ${topic.title || "无标题"}\n\n`;
-        content += `> [!info] 帖子信息\n`;
-        content += `> - **原始链接**: [${topic.url || ""}](${topic.url || ""})\n`;
-        content += `> - **主题 ID**: ${topic.topicId || 0}\n`;
-        content += `> - **楼主**: @${topic.opUsername || "未知"}\n`;
-        content += `> - **分类**: ${topic.category || "无"}\n`;
-        content += `> - **标签**: ${allTags.join(", ")}\n`;
-        content += `> - **导出时间**: ${now.toLocaleString("zh-CN")}\n`;
-        content += `> - **楼层数**: ${posts.length}\n`;
-        if (exportTemplate === "forum" && filterSummary) {
-            content += `> - **筛选条件**: ${filterSummary}\n`;
-        }
-        content += "\n";
+        content += generateTopicInfoSection(topic, posts, filterSummary, now, exportTemplate, context);
 
         if (exportTemplate === "clean") {
             const primaryPost = getPrimaryPost(posts);
             if (!primaryPost) throw new Error("未找到首帖，无法按纯净风格导出");
 
-            const bodyMd = renderPrimaryPostMarkdown(primaryPost, settings, imgMap);
+            const bodyMd = renderPrimaryPostMarkdown(primaryPost, settings, imgMap, context);
             if (bodyMd) {
                 content += `${bodyMd}\n`;
             }
@@ -4376,28 +4641,41 @@ floors: ${posts.length}
         const { firstPost, remainingPosts } = splitPinnedFirstPost(posts);
         if (!firstPost) throw new Error("未找到首帖，无法按论坛风格导出");
 
-        const firstPostMd = renderPrimaryPostMarkdown(firstPost, settings, imgMap, { includeAnchor: true });
+        const firstPostMd = renderPrimaryPostMarkdown(firstPost, settings, imgMap, context, { includeAnchor: true });
         if (firstPostMd) {
             content += `${firstPostMd}\n\n`;
         }
 
         for (const p of remainingPosts) {
-            content += generatePostCallout(p, topic, settings, imgMap);
+            content += generatePostMarkdown(p, topic, settings, imgMap, context);
             content += "\n";
         }
 
         return frontmatter + content;
     }
 
-    function renderPrimaryPostMarkdown(post, settings, imgMap, options = {}) {
-        const bodyMd = cookedToMarkdown(post?.cooked || "", settings, imgMap);
+    function renderPrimaryPostMarkdown(post, settings, imgMap, renderContext, options = {}) {
+        const context = renderContext || buildRenderContext("markdown", settings);
+        const bodyMd = cookedToMarkdown(post?.cooked || "", settings, imgMap, context);
         if (!options.includeAnchor) return bodyMd;
 
-        const anchor = `^floor-${Number(post?.post_number || 1)}`;
-        return bodyMd ? `${bodyMd}\n\n${anchor}` : anchor;
+        const anchor = buildFloorAnchor(post?.post_number || 1, context);
+        if (!bodyMd) return anchor;
+        if (context.anchorStyle === "html-id") {
+            return `${anchor}\n\n${bodyMd}`;
+        }
+        return `${bodyMd}\n\n${anchor}`;
     }
 
-    function generatePostCallout(post, topic, settings, imgMap) {
+    function generatePostMarkdown(post, topic, settings, imgMap, renderContext) {
+        const context = renderContext || buildRenderContext("markdown", settings);
+        return context.replyStyle === "callout"
+            ? generatePostCallout(post, topic, settings, imgMap, context)
+            : generatePostSection(post, topic, settings, imgMap, context);
+    }
+
+    function generatePostCallout(post, topic, settings, imgMap, renderContext) {
+        const context = renderContext || buildRenderContext("obsidian", settings);
         const isOp = (post.username || "").toLowerCase() === (topic.opUsername || "").toLowerCase();
         const dateStr = post.created_at ? new Date(post.created_at).toLocaleString("zh-CN") : "";
 
@@ -4414,18 +4692,52 @@ floors: ${posts.length}
         let md = `> [!${calloutType}]+ ${title}\n`;
 
         if (post.reply_to_post_number) {
-            md += `> > 回复 [[#^floor-${post.reply_to_post_number}|#${post.reply_to_post_number}楼]]\n>\n`;
+            const replyLabel = `#${post.reply_to_post_number}楼`;
+            md += `> > 回复 ${buildFloorReference(post.reply_to_post_number, context, replyLabel)}\n>\n`;
         }
 
-        const bodyMd = cookedToMarkdown(post.cooked, settings, imgMap);
+        const bodyMd = cookedToMarkdown(post.cooked, settings, imgMap, context);
         const lines = bodyMd.split("\n");
         for (const line of lines) {
             md += `> ${line}\n`;
         }
 
-        md += `> ^floor-${post.post_number}\n`;
+        md += `> ${buildFloorAnchor(post.post_number, context)}\n`;
 
         return md;
+    }
+
+    function generatePostSection(post, topic, settings, imgMap, renderContext) {
+        const context = renderContext || buildRenderContext("markdown", settings);
+        const isOp = (post.username || "").toLowerCase() === (topic.opUsername || "").toLowerCase();
+        const dateStr = post.created_at ? new Date(post.created_at).toLocaleString("zh-CN") : "";
+
+        let title = `#${post.post_number} ${post.name || post.username || "匿名"}`;
+        if (post.name && post.username && post.name !== post.username) {
+            title += ` (@${post.username})`;
+        }
+        if (isOp) title += " · 楼主";
+        if (dateStr) title += ` · ${dateStr}`;
+
+        const parts = [
+            buildFloorAnchor(post.post_number, context),
+            "",
+            `### ${title}`,
+            "",
+        ];
+
+        if (post.reply_to_post_number) {
+            const replyLabel = `#${post.reply_to_post_number}楼`;
+            parts.push(`回复 ${buildFloorReference(post.reply_to_post_number, context, replyLabel)}`);
+            parts.push("");
+        }
+
+        const bodyMd = cookedToMarkdown(post.cooked, settings, imgMap, context);
+        if (bodyMd) {
+            parts.push(bodyMd);
+        }
+
+        return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
     }
 
     function buildDuplicatePathDetails(matches, limit = 3) {
@@ -4580,11 +4892,12 @@ floors: ${posts.length}
     }
 
     async function buildExportContext(target, baseSettings) {
-        const exportTarget = target === "markdown" ? "markdown" : "obsidian";
+        const exportTarget = normalizeExportTarget(target);
         const topicId = getTopicId();
         if (!topicId) throw new Error("未检测到帖子 ID");
 
         const settings = buildTargetExportSettings(baseSettings || ui.getSettings(), exportTarget);
+        const renderContext = buildRenderContext(exportTarget, settings);
         const isCleanTemplate = settings.exportTemplate === "clean";
         const aiConfigMissing = !settings.ai?.apiUrl || !settings.ai?.apiKey || !settings.ai?.modelId;
 
@@ -4680,6 +4993,7 @@ floors: ${posts.length}
             topic: data.topic,
             selected,
             settings,
+            renderContext,
             filename: buildMarkdownFilename(data.topic),
             filterSummary,
             aiOutcome,
@@ -4688,57 +5002,76 @@ floors: ${posts.length}
     }
 
     async function buildImageMapForExport(posts, settings, options = {}) {
-        const exportTarget = options?.target === "markdown" ? "markdown" : "obsidian";
+        const exportTarget = normalizeExportTarget(options?.target);
         const topicId = String(options?.topicId || "").trim();
-        const imgMode = normalizeObsidianImageMode(settings?.obsidian?.imgMode);
-        const imgUrls = imgMode === "none" ? [] : collectImageUrlsFromPosts(posts);
+        const renderContext = options?.renderContext || buildRenderContext(exportTarget, settings);
+        const imagePolicy = renderContext?.imagePolicy || "remote";
+        const needsImageCollection = imagePolicy !== "none";
+        const imageAssets = imagePolicy === "none" || !needsImageCollection ? [] : collectImageAssetsFromPosts(posts);
         const imgMap = {};
 
-        if (imgMode === "base64" && imgUrls.length > 0) {
+        if (imagePolicy === "base64" && imageAssets.length > 0) {
             ui.setStatus(
                 exportTarget === "markdown" ? "正在处理图片（Base64 下载）…" : "正在下载图片（Base64 模式）…",
                 "#a855f7"
             );
             let done = 0;
-            for (const url of imgUrls) {
+            for (const asset of imageAssets) {
                 try {
-                    const dataUrl = await imageUrlToBase64(url);
-                    imgMap[url] = dataUrl;
+                    const { blob, sourceUrl } = await fetchImageAssetBlob(asset);
+                    const dataUrl = await blobToDataUrl(blob);
+                    registerImageMapEntry(imgMap, asset, {
+                        preferredSrc: sourceUrl || asset.preferredSrc,
+                        renderedValue: dataUrl,
+                    });
                 } catch (e) {
-                    console.warn("图片转换失败:", url, e);
-                    imgMap[url] = url;
+                    console.warn("图片转换失败:", asset?.preferredSrc, e);
+                    registerImageMapEntry(imgMap, asset, {
+                        preferredSrc: asset.preferredSrc,
+                        renderedValue: null,
+                    });
                 }
                 done += 1;
-                ui.setProgress(done, imgUrls.length, exportTarget === "markdown" ? "处理图片" : "下载图片");
+                ui.setProgress(done, imageAssets.length, exportTarget === "markdown" ? "处理图片" : "下载图片");
             }
-        } else if (imgMode === "file" && imgUrls.length > 0) {
+        } else if (imagePolicy === "file" && imageAssets.length > 0) {
             ui.setStatus("正在下载并保存图片到 Obsidian…", "#a855f7");
             const imgDir = settings.obsidian.imgDir || resolveObsidianPaths(ui.obsidianConfig || getStoredObsidianConfig()).imgDir;
             const topicImgDir = joinVaultPath(imgDir, topicId);
             let done = 0;
 
-            for (const url of imgUrls) {
+            for (const asset of imageAssets) {
                 try {
-                    const urlObj = new URL(url);
-                    let ext = urlObj.pathname.split(".").pop() || "png";
-                    if (ext.length > 5 || !/^[a-z0-9]+$/i.test(ext)) ext = "png";
+                    const { blob, sourceUrl } = await fetchImageAssetBlob(asset);
+                    const ext = getImageFileExtension(sourceUrl || asset.preferredSrc, blob.type);
                     const filename = `${Date.now()}-${done}.${ext}`;
                     const fullPath = joinVaultPath(topicImgDir, filename);
 
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                    const blob = await response.blob();
-
                     await writeImageToObsidian(fullPath, blob, settings);
-                    imgMap[url] = fullPath;
+                    registerImageMapEntry(imgMap, asset, {
+                        preferredSrc: sourceUrl || asset.preferredSrc,
+                        renderedValue: fullPath,
+                    });
                 } catch (e) {
-                    console.warn("图片保存失败:", url, e);
-                    imgMap[url] = null;
+                    console.warn("图片保存失败:", asset?.preferredSrc, e);
+                    registerImageMapEntry(imgMap, asset, {
+                        preferredSrc: asset.preferredSrc,
+                        renderedValue: null,
+                    });
                 }
                 done += 1;
-                ui.setProgress(done, imgUrls.length, "保存图片");
+                ui.setProgress(done, imageAssets.length, "保存图片");
             }
-        } else if (imgMode === "local-plus" && imgUrls.length > 0 && exportTarget === "obsidian") {
+        } else if ((imagePolicy === "local-plus" || imagePolicy === "remote") && imageAssets.length > 0) {
+            for (const asset of imageAssets) {
+                registerImageMapEntry(imgMap, asset, {
+                    preferredSrc: asset.preferredSrc,
+                    renderedValue: asset.preferredSrc,
+                });
+            }
+        }
+
+        if (imagePolicy === "local-plus" && imageAssets.length > 0 && exportTarget === "obsidian") {
             ui.setStatus("正在保留远程图片链接…", "#a855f7");
         }
 
@@ -4748,9 +5081,11 @@ floors: ${posts.length}
     async function buildMarkdownExportPayload(target, context) {
         const exportContext = context || await buildExportContext(target);
         const settings = buildTargetExportSettings(exportContext.settings, exportContext.target);
+        const renderContext = exportContext.renderContext || buildRenderContext(exportContext.target, settings);
         const imgMap = await buildImageMapForExport(exportContext.selected, settings, {
             target: exportContext.target,
             topicId: exportContext.topicId,
+            renderContext,
         });
 
         ui.setStatus("正在生成 Markdown…", "#a855f7");
@@ -4759,12 +5094,14 @@ floors: ${posts.length}
             exportContext.selected,
             settings,
             imgMap,
-            exportContext.filterSummary
+            exportContext.filterSummary,
+            renderContext
         );
 
         return {
             ...exportContext,
             settings,
+            renderContext,
             imgMap,
             markdown,
         };
