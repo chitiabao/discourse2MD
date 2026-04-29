@@ -611,6 +611,13 @@
             .filter(Boolean);
     }
 
+    function getMarkdownHeadingPrefix(tagName) {
+        const level = clampInt(String(tagName || "").replace(/^h/i, ""), 1, 6, 3);
+        if (level <= 1) return "##";
+        if (level === 2) return "###";
+        return "####";
+    }
+
     function sleep(ms) {
         return new Promise((r) => setTimeout(r, ms));
     }
@@ -1025,7 +1032,9 @@
 
             if (/^h[1-6]$/.test(tag)) {
                 const inner = Array.from(el.childNodes).map((c) => serialize(c, inPre)).join("").trim();
-                return inner ? `\n**${inner}**\n\n` : "";
+                if (!inner) return "";
+                const prefix = getMarkdownHeadingPrefix(tag);
+                return `\n${prefix} ${inner}\n\n`;
             }
 
             if (tag === "li") {
